@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-09
+
+### Added
+
+- **🔒 End-to-End Encryption (E2EE)**
+
+  - **Cryptographic Stack**:
+
+    - X25519 (ECDH) for key exchange
+    - ChaCha20-Poly1305 (AEAD) for message encryption
+    - Ed25519 for identity keys (signatures)
+    - HKDF-SHA256 for key derivation
+    - SHA-256 for safety number fingerprints
+
+  - **Key Management**:
+
+    - Automatic key exchange on connect
+    - Ephemeral keys (in-memory only, never persisted)
+    - 24-hour automatic key rotation (infrastructure ready)
+    - Per-peer session management with timeout cleanup
+    - Implementation: `client/src/crypto.rs`, `client/src/keystore.rs`
+
+  - **Message Encryption**:
+
+    - Transparent encryption for DM messages
+    - Automatic decryption on receive
+    - Fallback to plaintext if no session exists
+    - 🔒 lock icon displayed on encrypted messages
+    - Implementation: `client/src/network.rs`
+
+  - **Protocol Changes** ⚠️ **BREAKING**:
+    - Added `encrypted` boolean field to `WireMessage`
+    - Added `recipient` optional field for routing
+    - Added `KEY_EXCHANGE` message type
+    - Server acts as dumb relay (cannot read encrypted content)
+    - Implementation: `client/src/app.rs`
+
+- **Security Audit Logging**
+
+  - Comprehensive logging of all security events
+  - Log location: `~/.config/ghostwire/security_audit.log`
+  - Events logged:
+    - Session establishment/clearing
+    - Message encryption/decryption
+    - Decryption failures
+    - Key rotations
+    - Security warnings
+  - Implementation: `client/src/security_audit.rs`
+
+- **Self-Destructing Messages**
+
+  - Message expiry with TTL (time-to-live)
+  - Automatic cleanup every 5 seconds
+  - Secure deletion with memory zeroing (`zeroize` crate)
+  - Infrastructure: `ChatMessage::with_expiry()` constructor
+  - Implementation: `client/src/app.rs`
+
+- **Documentation**
+
+  - Comprehensive security model documentation: `docs/SECURITY.md`
+  - Threat model analysis
+  - Best practices for users and developers
+  - Known limitations and future roadmap
+  - Cryptographic standards compliance
+
+### Changed
+
+- **Message Protocol**: Messages now include encryption metadata
+- **Network Layer**: Integrated KeyStore for encryption operations
+- **UI**: Messages display encryption status with lock icon
+- **App State**: Messages track encryption status and expiry
+- **Dependencies**: Added 8 new cryptographic crates
+
+### Security Notes
+
+⚠️ **Important**: This is the initial E2EE release. While using industry-standard cryptography:
+
+- Third-party security audit pending (planned for v1.0.0)
+- Only DM messages are encrypted (group encryption in v0.4.0)
+- Trust-on-first-use (TOFU) model - no manual key verification UI yet
+- Metadata (who talks to whom, when) visible to server
+- No replay protection beyond timestamps
+
+See `docs/SECURITY.md` for complete details.
+
+### Compatibility
+
+⚠️ **BREAKING CHANGES**:
+
+- Wire protocol modified (v0.2.0 clients incompatible with v0.3.0 server)
+- New required fields in `WireMessage` struct
+- Recommendation: Upgrade all clients and server simultaneously
+
 ## [0.2.0] - 2025-12-05
 
 ### Added

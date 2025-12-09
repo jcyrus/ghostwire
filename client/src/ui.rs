@@ -246,7 +246,9 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                     };
                     
-                    let prefix = format!("[{}] {}: ", timestamp, msg.sender);
+                    // Add lock icon for encrypted messages (v0.3.0)
+                    let lock_icon = if msg.encrypted { "🔒 " } else { "" };
+                    let prefix = format!("[{}] {}{}: ", timestamp, lock_icon, msg.sender);
                     let prefix_len = prefix.chars().count();
                     let content_width = available_width.saturating_sub(prefix_len);
                     

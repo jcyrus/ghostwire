@@ -2,6 +2,9 @@
 // This module handles WebSocket communication in a separate async task
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
+use crate::crypto::{decrypt_message, encrypt_message};
+use crate::keystore::KeyStore;
+use crate::security_audit::{SecurityAuditLogger, SecurityEvent};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,6 +27,7 @@ pub enum NetworkEvent {
         content: String,
         timestamp: i64,
         channel_id: String,
+        encrypted: bool, // v0.3.0: true if message was encrypted
     },
     
     /// User joined
@@ -50,6 +54,12 @@ pub enum NetworkEvent {
         channel_id: String,
         is_typing: bool,
     },
+    
+    /// Key exchange received (v0.3.0 E2EE)
+    KeyExchangeReceived {
+        username: String,
+        public_key: String,
+    },
 }
 
 /// Messages sent from the UI to the network task
@@ -65,6 +75,9 @@ pub enum NetworkCommand {
     /// Send typing status
     SendTypingStatus { channel_id: String, is_typing: bool },
     
+    /// Send key exchange (v0.3.0 E2EE)
+    SendKeyExchange { recipient: Option<String> },
+    
     /// Disconnect from server
     Disconnect,
 }
@@ -77,6 +90,25 @@ pub async fn network_task(
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     mut command_rx: mpsc::UnboundedReceiver<NetworkCommand>,
 ) {
+    // Initialize keystore for E2EE (v0.3.0)
+    let keystore = Arc::new(Mutex::new(KeyStore::new()));
+    
+    // Initialize security audit logger
+    let audit_logger = Arc::new(Mutex::new({
+        let config_dir = directories::ProjectDirs::from("com", "ghostwire", "GhostWire")
+            .map(|dirs| dirs.config_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        SecurityAuditLogger::new(&config_dir)
+    }));
+    
+    tracing::info!("Security audit logging enabled at {:?}", 
+        audit_logger.lock().unwrap().log_path());
+    
+    // Send our public key on connect (broadcast for key exchange)
+    let our_public_key = {
+        let store = keystore.lock().unwrap();
+        store.get_our_public_key()
+    };
     // Auto-reconnect configuration
     let max_attempts = 10;
     let initial_backoff_secs = 1;
@@ -162,6 +194,26 @@ pub async fn network_task(
             return;
         }
     }
+    
+    // Send key exchange message to announce our public key (v0.3.0)
+    let key_exchange_msg = WireMessage {
+        msg_type: MessageType::KeyExchange,
+        payload: our_public_key.clone(),
+        channel: "global".to_string(),
+        meta: MessageMeta {
+            sender: username.clone(),
+            timestamp: chrono::Utc::now().timestamp(),
+        },
+        is_typing: false,
+        encrypted: false,
+        recipient: None,
+    };
+    
+    if let Ok(json) = serde_json::to_string(&key_exchange_msg) {
+        if let Err(e) = write.send(Message::Text(json)).await {
+            tracing::warn!("Failed to send key exchange: {}", e);
+        }
+    }
 
     // Heartbeat interval - send ping every 30 seconds to keep connection alive
     let mut heartbeat = interval(Duration::from_secs(30));
@@ -199,7 +251,7 @@ pub async fn network_task(
                     Ok(Message::Text(text)) => {
                         // Parse the wire message
                         if let Ok(wire_msg) = serde_json::from_str::<WireMessage>(&text) {
-                            handle_wire_message(wire_msg, &event_tx);
+                            handle_wire_message(wire_msg, &event_tx, &keystore, &audit_logger);
                         } else {
                             let _ = event_tx.send(NetworkEvent::Error {
                                 message: "Failed to parse message".to_string(),
@@ -243,21 +295,61 @@ pub async fn network_task(
             Some(command) = command_rx.recv() => {
                 match command {
                     NetworkCommand::SendMessage { content, channel_id } => {
+                        // Determine recipient from channel_id (dm:user1:user2)
+                        let recipient = if channel_id.starts_with("dm:") {
+                            let parts: Vec<&str> = channel_id.split(':').collect();
+                            parts.iter()
+                                .find(|&&u| u != username)
+                                .map(|&u| u.to_string())
+                        } else {
+                            None
+                        };
+                        
+                        // Try to encrypt if we have a session with recipient
+                        let (payload, encrypted) = if let Some(ref recip) = recipient {
+                            let mut store = keystore.lock().unwrap();
+                            if store.has_session(recip) {
+                                match store.get_session(recip) {
+                                    Ok(session) => {
+                                        match encrypt_message(&content, &session.session_keys.encryption_key) {
+                                            Ok(encrypted_payload) => {
+                                                tracing::debug!("Encrypted message to {}", recip);
+                                                (encrypted_payload, true)
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Encryption failed: {}, sending plaintext", e);
+                                                (content.clone(), false)
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to get session: {}, sending plaintext", e);
+                                        (content.clone(), false)
+                                    }
+                                }
+                            } else {
+                                tracing::debug!("No session with {}, sending plaintext", recip);
+                                (content.clone(), false)
+                            }
+                        } else {
+                            // Group/global messages are plaintext for now
+                            (content.clone(), false)
+                        };
+                        
                         let msg = WireMessage {
                             msg_type: MessageType::Message,
-                            payload: content,
+                            payload,
                             channel: channel_id,
                             meta: MessageMeta {
                                 sender: username.clone(),
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
                             is_typing: false,
-                            encrypted: false, // TODO: Encrypt in v0.3.0
-                            recipient: None,
+                            encrypted,
+                            recipient,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
-                            // Use if let to handle errors gracefully (no .unwrap())
                             if let Err(e) = write.send(Message::Text(json)).await {
                                 let _ = event_tx.send(NetworkEvent::Error {
                                     message: format!("Failed to send message: {}", e),
@@ -307,6 +399,33 @@ pub async fn network_task(
                             }
                         }
                     }
+                    NetworkCommand::SendKeyExchange { recipient } => {
+                        let public_key = {
+                            let store = keystore.lock().unwrap();
+                            store.get_our_public_key()
+                        };
+                        
+                        let msg = WireMessage {
+                            msg_type: MessageType::KeyExchange,
+                            payload: public_key,
+                            channel: "global".to_string(),
+                            meta: MessageMeta {
+                                sender: username.clone(),
+                                timestamp: chrono::Utc::now().timestamp(),
+                            },
+                            is_typing: false,
+                            encrypted: false,
+                            recipient,
+                        };
+                        
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if let Err(e) = write.send(Message::Text(json)).await {
+                                tracing::warn!("Failed to send key exchange: {}", e);
+                            } else {
+                                tracing::info!("Sent key exchange message");
+                            }
+                        }
+                    }
                     NetworkCommand::Disconnect => {
                         tracing::info!("Received disconnect command");
                         let _ = write.send(Message::Close(None)).await;
@@ -340,14 +459,61 @@ pub async fn network_task(
 fn handle_wire_message(
     msg: WireMessage,
     event_tx: &mpsc::UnboundedSender<NetworkEvent>,
+    keystore: &Arc<Mutex<KeyStore>>,
+    audit_logger: &Arc<Mutex<SecurityAuditLogger>>,
 ) {
     match msg.msg_type {
         MessageType::Message => {
+            // Decrypt message if it's encrypted
+            let (content, message_id) = if msg.encrypted {
+                let message_id = uuid::Uuid::new_v4().to_string();
+                let mut store = keystore.lock().unwrap();
+                if let Ok(session) = store.get_session(&msg.meta.sender) {
+                    match decrypt_message(&msg.payload, &session.session_keys.encryption_key) {
+                        Ok(plaintext) => {
+                            tracing::debug!("Decrypted message from {}", msg.meta.sender);
+                            session.last_message_at = chrono::Utc::now();
+                            
+                            // Audit log
+                            audit_logger.lock().unwrap().log(SecurityEvent::MessageDecrypted {
+                                sender: msg.meta.sender.clone(),
+                                message_id: message_id.clone(),
+                            });
+                            
+                            (plaintext, message_id)
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to decrypt message from {}: {}", msg.meta.sender, e);
+                            
+                            // Audit log failure
+                            audit_logger.lock().unwrap().log(SecurityEvent::DecryptionFailed {
+                                sender: msg.meta.sender.clone(),
+                                reason: e.to_string(),
+                            });
+                            
+                            (format!("[Decryption failed: {}]", e), message_id)
+                        }
+                    }
+                } else {
+                    tracing::warn!("No session for encrypted message from {}", msg.meta.sender);
+                    
+                    // Audit log
+                    audit_logger.lock().unwrap().log(SecurityEvent::SecurityWarning {
+                        message: format!("Received encrypted message from {} without session", msg.meta.sender),
+                    });
+                    
+                    ("[No encryption session]".to_string(), message_id)
+                }
+            } else {
+                (msg.payload, uuid::Uuid::new_v4().to_string())
+            };
+            
             let _ = event_tx.send(NetworkEvent::Message {
                 sender: msg.meta.sender,
-                content: msg.payload,
+                content,
                 timestamp: msg.meta.timestamp,
                 channel_id: msg.channel,
+                encrypted: msg.encrypted,
             });
         }
         MessageType::System => {
@@ -380,8 +546,37 @@ fn handle_wire_message(
             });
         }
         MessageType::KeyExchange => {
-            // TODO: Handle key exchange in v0.3.0
-            tracing::debug!("Received key exchange from {}", msg.meta.sender);
+            // Store peer's public key and establish session
+            let their_username = msg.meta.sender.clone();
+            let their_public_key = msg.payload.clone();
+            
+            let mut store = keystore.lock().unwrap();
+            
+            // Store their public key
+            if let Err(e) = store.store_peer_public_key(&their_username, &their_public_key) {
+                tracing::error!("Failed to store public key from {}: {}", their_username, e);
+                return;
+            }
+            
+            // Establish encrypted session
+            if let Err(e) = store.establish_session(&their_username) {
+                tracing::error!("Failed to establish session with {}: {}", their_username, e);
+                return;
+            }
+            
+            tracing::info!("✓ Established E2EE session with {}", their_username);
+            
+            // Audit log session establishment
+            audit_logger.lock().unwrap().log(SecurityEvent::SessionEstablished {
+                peer: their_username.clone(),
+                public_key_fingerprint: their_public_key[..16].to_string(), // First 16 chars as fingerprint
+            });
+            
+            // Notify UI layer
+            let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {
+                username: their_username,
+                public_key: their_public_key,
+            });
         }
     }
 }

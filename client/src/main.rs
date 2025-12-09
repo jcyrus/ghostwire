@@ -11,6 +11,7 @@ mod errors;
 mod keystore;
 mod logging;
 mod network;
+mod security_audit;
 mod ui;
 
 use app::{App, ChatMessage, InputMode, User};
@@ -152,9 +153,18 @@ fn run_ui_loop(
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
     let mut last_memory_update = Instant::now();
     
+    // Track message cleanup for self-destruct (v0.3.0)
+    let mut last_cleanup = Instant::now();
+    
     loop {
         // Update frame timing for FPS calculation
         app.update_frame_time();
+        
+        // Cleanup expired messages every 5 seconds (v0.3.0)
+        if last_cleanup.elapsed() >= Duration::from_secs(5) {
+            app.cleanup_expired_messages();
+            last_cleanup = Instant::now();
+        }
         
         // Update memory usage every 500ms (don't need it every frame)
         if last_memory_update.elapsed() >= Duration::from_millis(500) {
@@ -348,14 +358,14 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             tracing::warn!("Disconnected from server");
             app.set_connected(false);
         }
-        NetworkEvent::Message { sender, content, timestamp, channel_id } => {
-            tracing::debug!("Received message from {} in channel {}", sender, channel_id);
+        NetworkEvent::Message { sender, content, timestamp, channel_id, encrypted } => {
+            tracing::debug!("Received message from {} in channel {} (encrypted: {})", sender, channel_id, encrypted);
             // Convert Unix timestamp to DateTime
             let datetime = chrono::DateTime::from_timestamp(timestamp, 0)
                 .unwrap_or_else(Utc::now);
             
-            // Create message with actual timestamp
-            let mut msg = ChatMessage::new(sender.clone(), content, false);
+            // Create message with actual timestamp and encryption status
+            let mut msg = ChatMessage::with_encryption(sender.clone(), content, encrypted);
             msg.timestamp = datetime;
             
             // Add user to roster if not already there (for user discovery)
@@ -409,6 +419,13 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
         NetworkEvent::TypingStatus { username, channel_id, is_typing } => {
             tracing::debug!("User {} typing status: {} in channel {}", username, is_typing, channel_id);
             app.set_user_typing(&channel_id, &username, is_typing);
+        }
+        NetworkEvent::KeyExchangeReceived { username, public_key: _ } => {
+            tracing::info!("✓ Key exchange complete with {}", username);
+            app.add_message(ChatMessage::system_with_severity(
+                format!("🔒 Secure session established with {}", username),
+                app::MessageSeverity::Info,
+            ));
         }
     }
 }

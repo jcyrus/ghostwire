@@ -78,6 +78,12 @@ pub struct ChatMessage {
     pub timestamp: DateTime<Utc>,
     pub is_system: bool,
     pub severity: Option<MessageSeverity>,
+    /// True if this message was encrypted (v0.3.0)
+    pub encrypted: bool,
+    /// Auto-delete after this time (v0.3.0 self-destruct)
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Unique message ID for deletion tracking
+    pub id: String,
 }
 
 impl ChatMessage {
@@ -88,7 +94,52 @@ impl ChatMessage {
             timestamp: Utc::now(),
             is_system,
             severity: None,
+            encrypted: false,
+            expires_at: None,
+            id: uuid::Uuid::new_v4().to_string(),
         }
+    }
+    
+    pub fn with_encryption(sender: String, content: String, encrypted: bool) -> Self {
+        Self {
+            sender,
+            content,
+            timestamp: Utc::now(),
+            is_system: false,
+            severity: None,
+            encrypted,
+            expires_at: None,
+            id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+    
+    pub fn with_expiry(sender: String, content: String, encrypted: bool, ttl_seconds: i64) -> Self {
+        Self {
+            sender,
+            content,
+            timestamp: Utc::now(),
+            is_system: false,
+            severity: None,
+            encrypted,
+            expires_at: Some(Utc::now() + chrono::Duration::seconds(ttl_seconds)),
+            id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+    
+    /// Check if message has expired (for self-destruct)
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            Utc::now() > expires_at
+        } else {
+            false
+        }
+    }
+    
+    /// Securely wipe message content (overwrite with zeros)
+    pub fn secure_delete(&mut self) {
+        use zeroize::Zeroize;
+        self.content.zeroize();
+        self.content = "[Deleted]".to_string();
     }
 
     pub fn system(content: String) -> Self {
@@ -98,6 +149,9 @@ impl ChatMessage {
             timestamp: Utc::now(),
             is_system: true,
             severity: Some(MessageSeverity::Info),
+            encrypted: false,
+            expires_at: None,
+            id: uuid::Uuid::new_v4().to_string(),
         }
     }
     
@@ -108,6 +162,9 @@ impl ChatMessage {
             timestamp: Utc::now(),
             is_system: true,
             severity: Some(severity),
+            encrypted: false,
+            expires_at: None,
+            id: uuid::Uuid::new_v4().to_string(),
         }
     }
 }
@@ -799,5 +856,49 @@ impl App {
     /// Quit the application
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+    
+    /// Clean up expired messages (self-destruct feature - v0.3.0)
+    pub fn cleanup_expired_messages(&mut self) {
+        for channel in self.channels.values_mut() {
+            let initial_count = channel.messages.len();
+            
+            // Securely delete expired messages
+            channel.messages.retain_mut(|msg| {
+                if msg.is_expired() {
+                    tracing::info!("Auto-deleting expired message: {}", msg.id);
+                    msg.secure_delete();
+                    false // Remove from list
+                } else {
+                    true // Keep
+                }
+            });
+            
+            let removed = initial_count - channel.messages.len();
+            if removed > 0 {
+                tracing::info!("Cleaned up {} expired messages in channel {}", removed, channel.id);
+            }
+        }
+    }
+    
+    /// Securely delete a specific message by ID (v0.3.0)
+    pub fn secure_delete_message(&mut self, message_id: &str, channel_id: &str) -> bool {
+        if let Some(channel) = self.channels.get_mut(channel_id) {
+            if let Some(msg) = channel.messages.iter_mut().find(|m| m.id == message_id) {
+                msg.secure_delete();
+                tracing::info!("Securely deleted message {}", message_id);
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Get count of encrypted messages in active channel (for stats)
+    pub fn count_encrypted_messages(&self) -> usize {
+        if let Some(channel) = self.channels.get(&self.active_channel) {
+            channel.messages.iter().filter(|m| m.encrypted).count()
+        } else {
+            0
+        }
     }
 }

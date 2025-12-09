@@ -2,93 +2,77 @@
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 
-**Current Version**: v0.1.2  
-**Last Updated**: 2025-12-04
+**Current Version**: v0.3.0  
+**Last Updated**: 2025-12-09
 
 ---
 
-## 🎯 Immediate Priorities (v0.2.0)
+## ✅ Completed Releases
 
-**Target**: December 2025  
-**Theme**: Developer Experience & Core Utilities
+### v0.2.0 - Developer Experience & Core Utilities
 
-### Features
+**Released**: December 2025
 
-- [x] **Version Flag** - `ghostwire --version` to check current version ✅
-- [x] **Help Command** - `ghostwire --help` with usage instructions ✅
-- [x] **Auto-Reconnect** - Automatically reconnect on connection loss ✅
-- [x] **Connection Quality Indicator** - Show ping/latency in real-time ✅
-- [x] **Typing Indicators** - Show when users are typing ✅
-- [x] **Message Timestamps** - Configurable timestamp formats ✅
-- [x] **Scroll Indicators** - Show position in chat history ✅
-- [x] **Unread Message Count** - Badge on channels with unread messages ✅
+- [x] Version flag, help command, auto-reconnect
+- [x] Connection quality indicator, typing indicators
+- [x] Message timestamps, scroll indicators, unread counts
+- [x] Configuration file, logging system, error recovery
+- [x] Performance metrics (FPS, memory)
+- [x] Complete documentation
 
-### Technical Improvements
+### v0.3.0 - Security Foundation (E2EE)
 
-- [x] **Configuration File** - `~/.config/ghostwire/config.toml` for user preferences ✅
-- [x] **Logging System** - Debug logs to `~/.config/ghostwire/logs/` ✅
-- [x] **Error Recovery** - Better error messages and recovery strategies ✅
-- [x] **Performance Metrics** - Track and display FPS, memory usage ✅
+**Released**: December 2025 🎉
 
-### Documentation
+#### End-to-End Encryption
 
-- [x] **User Guide** - Comprehensive usage documentation ✅
-- [x] **Troubleshooting Guide** - Common issues and solutions ✅
+- [x] **X25519 Key Exchange** - ECDH for deriving shared secrets ✅
+- [x] **ChaCha20-Poly1305 Encryption** - AEAD for message confidentiality ✅
+- [x] **Automatic Key Distribution** - Public keys broadcast on connect ✅
+- [x] **Session Management** - Per-peer ephemeral sessions ✅
+- [x] **Transparent Encryption** - DMs encrypted automatically ✅
 
----
+#### Zero-Trust Architecture
 
-## 🔒 Security Foundation (v0.3.0)
+- [x] **Client-Side Encryption** - All encryption in client ✅
+- [x] **Server Blindness** - Server sees only encrypted blobs ✅
+- [x] **No User Database** - Server stores nothing ✅
+- [x] **Ephemeral Keys** - In-memory only, never persisted ✅
+- [x] **24-Hour Key Rotation** - Automatic rotation (infrastructure ready) ✅
 
-**Target**: December 2025
-**Theme**: Zero-Trust Security Model
+#### Security Features
 
-### End-to-End Encryption (E2EE)
+- [x] **Self-Destructing Messages** - TTL-based expiry with secure deletion ✅
+- [x] **Secure Deletion** - Memory zeroing with zeroize crate ✅
+- [x] **Audit Logs** - Comprehensive security event logging ✅
+- [x] **Security Indicators** - 🔒 icon for encrypted messages ✅
+- [x] **Safety Numbers** - SHA-256 fingerprints (computed, UI pending) ✅
 
-- [ ] **Signal Protocol Integration** - Double Ratchet algorithm for perfect forward secrecy
-- [ ] **Key Exchange** - Secure key exchange via QR codes or manual verification
-- [ ] **Identity Verification** - Safety numbers for user verification
-- [ ] **Device Management** - Multi-device support with session management
-- [ ] **Encrypted Metadata** - Hide sender/recipient information from server
+#### Documentation
 
-### Zero-Trust Architecture
+- [x] **Security Model** - Complete threat analysis in `docs/SECURITY.md` ✅
+- [x] **Breaking Changes** - Protocol v0.3.0 incompatible with v0.2.0 ✅
 
-- [ ] **Client-Side Encryption** - All encryption happens on client
-- [ ] **Server Blindness** - Server cannot read message content or metadata
-- [ ] **No User Database** - Server doesn't store user information
-- [ ] **Ephemeral Keys** - Keys are never stored on server
-- [ ] **Forward Secrecy** - Past messages remain secure even if keys are compromised
-
-### Security Features
-
-- [ ] **Self-Destructing Messages** - Messages auto-delete after time period
-- [ ] **Screenshot Detection** - Warn users when screenshots are taken (where possible)
-- [ ] **Secure Deletion** - Overwrite message data on deletion
-- [ ] **Audit Logs** - Client-side logs of security events
-- [ ] **Security Indicators** - Visual indicators for encryption status
-
-### Implementation Details
-
-```rust
-// Proposed encryption flow
-1. User A generates ephemeral key pair
-2. User A sends public key to User B (via server, but server can't decrypt)
-3. User B generates ephemeral key pair
-4. Both users derive shared secret using ECDH
-5. Messages encrypted with AES-256-GCM using shared secret
-6. Server relays encrypted blobs (cannot decrypt)
-```
+**See**: `CHANGELOG.md` for details, `docs/SECURITY.md` for security model
 
 ---
 
-## 🚀 Enhanced Features (v0.4.0)
+## 🚀 Next Release (v0.4.0)
 
 **Target**: January 2026  
-**Theme**: Rich Communication
+**Theme**: Enhanced E2EE & Rich Communication
+
+### Enhanced Encryption
+
+- [ ] **Double Ratchet Algorithm** - Per-message keys for forward secrecy
+- [ ] **Safety Number Verification UI** - Manual identity verification
+- [ ] **Group Message Encryption** - Sender keys for group E2EE
+- [ ] **Key Rotation Triggers** - Automatic 24h rotation activation
+- [ ] **Replay Protection** - Nonce-based anti-replay
 
 ### Messaging Features
 
 - [ ] **File Sharing** - Send files up to 10MB (encrypted)
-- [ ] **Image Preview** - Inline image display in terminal
 - [ ] **Code Blocks** - Syntax highlighting for code snippets
 - [ ] **Markdown Support** - Rich text formatting
 - [ ] **Reactions** - Emoji reactions to messages
@@ -101,7 +85,6 @@
 - [ ] **Group Channels** - Multi-user group chats
 - [ ] **Group Permissions** - Admin, moderator, member roles
 - [ ] **Group Invites** - Invite links for groups
-- [ ] **Group Settings** - Customizable group settings
 
 ### Presence & Status
 
@@ -115,15 +98,28 @@
 ## 🎨 User Experience (v0.5.0)
 
 **Target**: February 2026  
-**Theme**: Customization & Accessibility
+**Theme**: Customization & Media Support
+
+### Media Features
+
+- [ ] **Image Preview** - Inline image display in terminal
+- [ ] **File Attachments** - Attach documents, images
+- [ ] **Voice Messages** - Send voice recordings
+- [ ] **Video Thumbnails** - Preview video files
 
 ### Themes & Customization
 
 - [ ] **Theme System** - Multiple color schemes (cyberpunk, matrix, nord, etc.)
 - [ ] **Custom Themes** - User-defined themes via config
-- [ ] **Font Customization** - Choose fonts and sizes
 - [ ] **Layout Options** - Rearrange panels
 - [ ] **Keybinding Customization** - Vim, Emacs, or custom keybindings
+
+---
+
+## 🎨 User Experience (v0.5.0)
+
+**Target**: February 2026  
+**Theme**: Customization & Accessibility
 
 ### Accessibility
 
@@ -139,10 +135,6 @@
 - [ ] **Sound Alerts** - Customizable sound effects
 - [ ] **Notification Rules** - Filter notifications by channel/user
 - [ ] **Quiet Hours** - Schedule notification muting
-
----
-
-## 🌐 Platform Expansion (v0.6.0)
 
 **Target**: March 2026  
 **Theme**: Cross-Platform & Integration
@@ -215,20 +207,19 @@
 - [ ] **Polls** - Create polls in channels
 - [ ] **Scheduled Messages** - Send messages at specific times
 
-### Automation
+## 🎓 Advanced Features (v0.8.0)
 
-- [ ] **Macros** - Record and replay actions
-- [ ] **Scripting** - Lua or JavaScript scripting
-- [ ] **Auto-Responders** - Automatic replies
-- [ ] **Message Filters** - Filter and organize messages
+**Target**: May 2026  
+**Theme**: Power User Features
 
-### Privacy Features
+### Advanced Messaging
 
-- [ ] **Anonymous Mode** - Chat without revealing identity
-- [ ] **Proxy Support** - SOCKS5/HTTP proxy support
-- [ ] **Tor Integration** - Route traffic through Tor
-- [ ] **VPN Detection** - Warn if VPN is not active
-- [ ] **Metadata Stripping** - Remove metadata from files
+- [ ] **Video Calls** - 1-on-1 video calls (WebRTC)
+- [ ] **Screen Sharing** - Share screen in calls
+- [ ] **Polls** - Create polls in channels
+- [ ] **Scheduled Messages** - Send messages at specific times
+
+### Automationta Stripping\*\* - Remove metadata from files
 
 ---
 
@@ -282,22 +273,23 @@
 - [ ] **API Documentation** - For developers building on GhostWire
 - [ ] **Video Tutorials** - Getting started videos
 - [ ] **Case Studies** - Real-world usage examples
-- [ ] **Best Practices** - Security and usage best practices
-- [ ] **Migration Guides** - Upgrade guides
 
-### Community
+### Stability & Security
 
-- [ ] **Public Roadmap** - Transparent development
-- [ ] **Community Forum** - Discussion platform
-- [ ] **Contributor Guide** - How to contribute
-- [ ] **Code of Conduct** - Community guidelines
-- [ ] **Governance Model** - Project governance
+- [ ] **Third-Party Security Audit** - Professional cryptographic audit
+- [ ] **Penetration Testing** - Offensive security testing
+- [ ] **Bug Bounty Program** - Reward security researchers
+- [ ] **Performance Testing** - Load testing and optimization
+- [ ] **Code Review** - Comprehensive code audit
 
----
+### Documentation
 
-## 🚀 Beyond v1.0.0
-
-### Long-Term Vision
+- [ ] **Complete Documentation** - All features documented
+- [ ] **API Documentation** - Complete developer reference
+- [ ] **Video Tutorials** - Getting started videos
+- [ ] **Case Studies** - Real-world usage examples
+- [ ] **Best Practices** - Security and usage guidelines
+- [ ] **Migration Guides** - Upgrade paths for all versions
 
 - **Decentralized Architecture** - P2P mesh network
 - **Blockchain Integration** - Decentralized identity
@@ -356,6 +348,29 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ---
 
-**Last Updated**: 2025-12-04  
+---
+
+## 🎯 Current Focus
+
+**Active Development**: v0.4.0 (Enhanced E2EE & Rich Communication)
+
+**Priorities**:
+
+1. Double Ratchet for forward secrecy
+2. Safety number verification UI
+3. Group message encryption
+4. File sharing with encryption
+
+**Recent Achievements** (v0.3.0):
+
+- ✅ End-to-end encryption operational
+- ✅ X25519 + ChaCha20-Poly1305 crypto stack
+- ✅ Security audit logging
+- ✅ Self-destructing messages
+- ✅ Comprehensive security documentation
+
+---
+
+**Last Updated**: 2025-12-09  
 **Maintained By**: @jcyrus  
 **License**: MIT
