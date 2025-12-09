@@ -2,15 +2,30 @@
 
 ## Overview
 
-Successfully implemented all previously unused fields and methods, adding real functionality to GhostWire:
+GhostWire has evolved from a basic chat client to a feature-rich terminal communication platform with v0.2.0.
 
-### ✅ Features Implemented
+### ✅ v0.2.0 Features (December 2025)
 
-1. **Message Timestamps** - Messages now display actual server timestamps
+1. **CLI & Help System** - Version flag, enhanced help with examples
+2. **Auto-Reconnect** - Exponential backoff reconnection (1s → 16s)
+3. **Real-time Latency** - Ping/pong timestamp tracking with RTT display
+4. **Typing Indicators** - Throttled typing status with 3s timeout
+5. **Configuration System** - TOML config file in ~/.config/ghostwire/
+6. **Logging System** - Daily rotating logs with RUST_LOG support
+7. **Timestamp Formats** - 24h, 12h, DateTime, Relative ("2m ago")
+8. **Enhanced Scrolling** - Line-based scroll, PageUp/Down, word wrapping
+9. **Performance Metrics** - FPS and memory usage tracking
+10. **Error Recovery** - Categorized errors with troubleshooting hints
+11. **Scroll Indicators** - Position counter, "↓ X more", scroll bar
+
+### ✅ v0.1.x Features
+
+1. **Message Timestamps** - Messages display actual server timestamps
 2. **User Activity Tracking** - Track when users last sent messages
 3. **Last Seen Display** - Show how long ago offline users were active
 4. **Connection Uptime** - Real-time tracking of connection duration
 5. **Re-authentication Support** - Infrastructure for reconnection scenarios
+6. **Idle Status** - Three-state presence (Online/Idle/Offline)
 
 ---
 

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-05
+
+### Added
+
+- **CLI Improvements**
+
+  - Version flag: `ghostwire --version` displays current version
+  - Enhanced help: `ghostwire --help` with usage examples and keyboard shortcuts
+  - Implementation: `client/src/main.rs` using clap 4.4
+
+- **Network Enhancements**
+
+  - Auto-reconnect with exponential backoff (1s → 16s, max 10 attempts)
+  - Real-time latency tracking with ping/pong timestamps
+  - Connection quality indicator in UI showing RTT in milliseconds
+  - Typing indicators with throttling (1/sec) and 3s timeout
+  - Implementation: `client/src/network.rs`
+
+- **Configuration System**
+
+  - Configuration file: `~/.config/ghostwire/config.toml`
+  - Settings: default server URL, auto-reconnect, timestamp format, typing indicators, log retention
+  - Uses confy crate for TOML management
+  - Implementation: `client/src/config.rs`
+
+- **Logging System**
+
+  - Daily rotating logs to `~/.config/ghostwire/logs/`
+  - RUST_LOG environment variable support
+  - File retention management
+  - Implementation: `client/src/logging.rs`
+
+- **Enhanced UI Features**
+
+  - Configurable timestamp formats: 24h, 12h, DateTime, Relative ("2m ago")
+  - Scroll indicators: position counter, "↓ X more" badge, visual scroll bar
+  - Typing indicators: Shows "username is typing..." below input
+  - Enhanced scrolling: PageUp/PageDown, 'g' for top, 'G' for bottom
+  - Word wrapping for long messages with proper indentation
+  - Performance metrics: FPS and memory usage in right sidebar
+  - Implementation: `client/src/ui.rs`, `client/src/app.rs`
+
+- **Error Recovery**
+  - Categorized errors: Connection, Auth, Network, Config, Terminal, FileSystem
+  - User-friendly error messages with troubleshooting hints
+  - Severity-based color coding (Info/Warning/Error) with icons (ℹ/⚠/✖)
+  - Implementation: `client/src/errors.rs`
+
+### Fixed
+
+- **Scroll Behavior**
+  - Fixed messages not appearing after chat fills terminal height
+  - Proper line-based scrolling with wrapped message support
+  - Auto-scroll only when at/near bottom (within 5 lines)
+  - Scroll offset calculation correctly handles visible window
+  - Implementation: `client/src/ui.rs`, `client/src/app.rs`
+
+### Changed
+
+- Scroll controls: j/k now scroll by 3 lines for better responsiveness
+- PageUp/PageDown scroll by 20 lines
+- Updated all documentation with new keyboard shortcuts
+
 ## [0.1.2] - 2025-12-04
 
 ### Fixed

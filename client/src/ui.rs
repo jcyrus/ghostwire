@@ -177,65 +177,103 @@ fn render_users(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render the chat area (middle section)
 fn render_chat_area(f: &mut Frame, app: &App, area: Rect) {
-    // Split chat area into messages and input
+    // Split chat area into messages and input with typing indicator
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),      // Chat messages
+            Constraint::Min(5),      // Chat messages (at least 5 lines)
             Constraint::Length(3),   // Input box
+            Constraint::Length(1),   // Typing indicator
         ])
         .split(area);
 
     render_messages(f, app, chunks[0]);
-    render_input(f, app, chunks[1]);
+    render_input_box(f, app, chunks[1]);
+    render_typing_indicator(f, app, chunks[2]);
 }
 
 /// Render chat messages
 fn render_messages(f: &mut Frame, app: &App, area: Rect) {
-    // Get messages from active channel
+    // Calculate available width for message content (subtract borders and some padding)
+    let available_width = area.width.saturating_sub(4) as usize;
+    
+    // Get ALL messages from active channel (don't skip/take here - let List handle it)
     let messages: Vec<ListItem> = if let Some(channel) = app.channels.get(&app.active_channel) {
         channel.messages
             .iter()
-            .map(|msg| {
-                let timestamp = msg.timestamp.format("%H:%M:%S");
+            .flat_map(|msg| {
+                let timestamp = app.timestamp_format.format(&msg.timestamp);
                 
-                let content = if msg.is_system {
-                    // System messages in red
-                    Line::from(vec![
-                        Span::styled(
-                            format!("[{}] ", timestamp),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            format!("⚠ {}", msg.content),
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ])
+                if msg.is_system {
+                    // System messages with color-coded severity
+                    use crate::app::MessageSeverity;
+                    
+                    let (color, symbol) = match msg.severity {
+                        Some(MessageSeverity::Info) => (Color::Cyan, "ℹ"),
+                        Some(MessageSeverity::Warning) => (Color::Yellow, "⚠"),
+                        Some(MessageSeverity::Error) => (Color::Red, "✖"),
+                        None => (Color::Red, "⚠"), // Default fallback
+                    };
+                    
+                    let prefix = format!("[{}] {} ", timestamp, symbol);
+                    let prefix_len = prefix.chars().count();
+                    let content_width = available_width.saturating_sub(prefix_len);
+                    
+                    // Wrap system message content
+                    let wrapped_lines = wrap_message_content(&msg.content, content_width);
+                    
+                    wrapped_lines.into_iter().enumerate().map(|(i, line)| {
+                        if i == 0 {
+                            // First line with prefix
+                            ListItem::new(Line::from(vec![
+                                Span::styled(prefix.clone(), Style::default().fg(Color::DarkGray)),
+                                Span::styled(line, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                            ]))
+                        } else {
+                            // Continuation lines with indent
+                            let indent = " ".repeat(prefix_len);
+                            ListItem::new(Line::from(vec![
+                                Span::raw(indent),
+                                Span::styled(line, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                            ]))
+                        }
+                    }).collect::<Vec<_>>()
                 } else {
                     // Regular messages
                     let sender_style = if msg.sender == app.username {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                     };
                     
-                    Line::from(vec![
-                        Span::styled(
-                            format!("[{}] ", timestamp),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(format!("{}: ", msg.sender), sender_style),
-                        Span::styled(&msg.content, Style::default().fg(Color::White)),
-                    ])
-                };
-                
-                ListItem::new(content)
+                    let prefix = format!("[{}] {}: ", timestamp, msg.sender);
+                    let prefix_len = prefix.chars().count();
+                    let content_width = available_width.saturating_sub(prefix_len);
+                    
+                    // Wrap message content
+                    let wrapped_lines = wrap_message_content(&msg.content, content_width);
+                    
+                    wrapped_lines.into_iter().enumerate().map(|(i, line)| {
+                        if i == 0 {
+                            // First line with full prefix
+                            ListItem::new(Line::from(vec![
+                                Span::styled(
+                                    format!("[{}] ", timestamp),
+                                    Style::default().fg(Color::DarkGray),
+                                ),
+                                Span::styled(format!("{}: ", msg.sender), sender_style),
+                                Span::styled(line, Style::default().fg(Color::White)),
+                            ]))
+                        } else {
+                            // Continuation lines with indent
+                            let indent = " ".repeat(prefix_len);
+                            ListItem::new(Line::from(vec![
+                                Span::raw(indent),
+                                Span::styled(line, Style::default().fg(Color::White)),
+                            ]))
+                        }
+                    }).collect::<Vec<_>>()
+                }
             })
             .collect()
     } else {
@@ -252,15 +290,62 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     let channel_name = app.channels.get(&app.active_channel)
         .map(|ch| ch.display_name())
         .unwrap_or_else(|| "Unknown".to_string());
-
-    let title = Line::from(vec![
+    
+    // Calculate scroll position info
+    let total_messages = app.get_total_messages();
+    let messages_below = app.get_messages_below();
+    
+    // Build title with scroll position indicator
+    let mut title_spans = vec![
         Span::raw(" "),
         Span::styled(channel_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         connection_status,
-    ]);
+    ];
+    
+    // Add scroll position indicator if there are messages
+    if total_messages > 0 {
+        let position_text = if app.scroll_position == 0 {
+            format!(" [Latest] ")
+        } else {
+            format!(" [↑{}] ", app.scroll_position)
+        };
+        title_spans.push(Span::styled(
+            position_text,
+            Style::default().fg(Color::DarkGray)
+        ));
+    }
+    
+    let title = Line::from(title_spans);
 
-    let messages_list = List::new(messages)
+    // Calculate scroll offset: when scroll_position=0, we want to show the bottom
+    // The List widget scrolls from top, so we need to calculate the offset
+    let total_items = messages.len();
+    let visible_lines = area.height.saturating_sub(2) as usize; // Subtract borders
+    
+    let scroll_offset = if total_items > visible_lines {
+        // Calculate how far from the top we should scroll
+        // When scroll_position=0 (at bottom), offset should be (total - visible)
+        // When scroll_position increases, offset decreases
+        let max_offset = total_items.saturating_sub(visible_lines);
+        let desired_offset = max_offset.saturating_sub(app.scroll_position);
+        // Clamp to valid range [0, max_offset]
+        desired_offset.min(max_offset)
+    } else {
+        0
+    };
+
+    // Slice messages to show only the visible window starting from scroll_offset
+    let visible_messages: Vec<ListItem> = if total_items > visible_lines {
+        messages.into_iter()
+            .skip(scroll_offset)
+            .take(visible_lines)
+            .collect()
+    } else {
+        messages
+    };
+    
+    let messages_list = List::new(visible_messages)
         .block(
             Block::default()
                 .title(title)
@@ -271,10 +356,36 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::Green));
 
     f.render_widget(messages_list, area);
+    
+    // Render scroll bar if there are enough items to scroll
+    if total_items > visible_lines {
+        render_scroll_bar(f, area, app.scroll_position, total_items, visible_lines);
+    }
+    
+    // Show "more messages below" indicator if not at bottom
+    if messages_below > 0 {
+        let indicator_text = format!(" ↓ {} more ", messages_below);
+        let indicator = Paragraph::new(indicator_text)
+            .style(Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD))
+            .alignment(ratatui::layout::Alignment::Center);
+        
+        // Position at bottom of messages area (just above border)
+        let indicator_area = ratatui::layout::Rect {
+            x: area.x + area.width / 4,
+            y: area.y + area.height - 2,
+            width: area.width / 2,
+            height: 1,
+        };
+        
+        f.render_widget(indicator, indicator_area);
+    }
 }
 
-/// Render input box
-fn render_input(f: &mut Frame, app: &App, area: Rect) {
+/// Render input box only
+fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
     let input_style = match app.input_mode {
         InputMode::Normal => Style::default().fg(Color::Green),
         InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -285,7 +396,11 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
         InputMode::Editing => " [EDIT] ",
     };
 
-    let input = Paragraph::new(app.input.as_str())
+    // Wrap text if it's too long
+    let available_width = area.width.saturating_sub(4) as usize; // Subtract borders and padding
+    let input_text = wrap_text(&app.input, available_width);
+
+    let input = Paragraph::new(input_text)
         .style(input_style)
         .block(
             Block::default()
@@ -293,17 +408,47 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(input_style),
-        );
+        )
+        .wrap(ratatui::widgets::Wrap { trim: false });
 
     f.render_widget(input, area);
 
     // Show cursor in edit mode
     if app.input_mode == InputMode::Editing {
-        // Calculate cursor position
+        // Calculate cursor position with wrapping
+        let lines_before = app.input[..app.input_cursor.min(app.input.len())]
+            .chars()
+            .filter(|&c| c == '\n')
+            .count();
+        let current_line_start = app.input[..app.input_cursor.min(app.input.len())]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let col_in_line = app.input_cursor.saturating_sub(current_line_start);
+        
         f.set_cursor(
-            area.x + app.input_cursor as u16 + 1,
-            area.y + 1,
+            area.x + (col_in_line % available_width) as u16 + 1,
+            area.y + (lines_before + col_in_line / available_width) as u16 + 1,
         );
+    }
+}
+
+/// Render typing indicator
+fn render_typing_indicator(f: &mut Frame, app: &App, area: Rect) {
+    let typing_users = app.get_typing_users();
+    if !typing_users.is_empty() {
+        let typing_text = if typing_users.len() == 1 {
+            format!("{} is typing...", typing_users[0])
+        } else if typing_users.len() == 2 {
+            format!("{} and {} are typing...", typing_users[0], typing_users[1])
+        } else {
+            format!("{} and {} others are typing...", typing_users[0], typing_users.len() - 1)
+        };
+        
+        let typing_indicator = Paragraph::new(typing_text)
+            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC));
+        
+        f.render_widget(typing_indicator, area);
     }
 }
 
@@ -315,6 +460,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(3),   // Connection uptime
             Constraint::Length(3),   // Latency
+            Constraint::Length(4),   // Performance (FPS + Memory)
             Constraint::Length(7),   // Statistics (expanded)
             Constraint::Min(3),      // Network activity chart
             Constraint::Length(3),   // Server time
@@ -363,6 +509,34 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         .percent(latency_percent);
     f.render_widget(latency, chunks[1]);
 
+    // Performance metrics (FPS and Memory)
+    let memory_mb = app.telemetry.memory_usage as f64 / 1024.0 / 1024.0;
+    let fps_color = if app.telemetry.fps >= 30.0 {
+        Color::Green
+    } else if app.telemetry.fps >= 15.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    
+    let performance_text = format!(
+        "FPS: {:.1}\nMem: {:.1} MB",
+        app.telemetry.fps,
+        memory_mb
+    );
+    
+    let performance = Paragraph::new(performance_text)
+        .style(Style::default().fg(fps_color))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .title(" Performance ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Green)),
+        );
+    f.render_widget(performance, chunks[2]);
+
     // Expanded statistics
     let active_channel_name = app.channels.get(&app.active_channel)
         .map(|ch| ch.display_name())
@@ -388,24 +562,25 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Green)),
         );
-    f.render_widget(stats, chunks[2]);
+    f.render_widget(stats, chunks[3]);
 
-    // Compact network activity chart
+    // Compact network activity chart using Braille sparkline
     let activity_data: Vec<u64> = app.telemetry.network_activity.clone();
     let max_activity = *activity_data.iter().max().unwrap_or(&1).max(&1);
     
-    // Take last 15 data points
-    let recent_data: Vec<(&str, u64)> = activity_data
+    // Take last 30 data points for sparkline
+    let recent_data: Vec<u64> = activity_data
         .iter()
         .rev()
-        .take(15)
+        .take(30)
         .rev()
-        .map(|&val| ("", val))
+        .copied()
         .collect();
     
+    let sparkline_text = create_sparkline(&recent_data, max_activity);
     let title = format!(" Activity (max: {}/s) ", max_activity);
     
-    let barchart = ratatui::widgets::BarChart::default()
+    let activity_chart = Paragraph::new(sparkline_text)
         .block(
             Block::default()
                 .title(title)
@@ -413,13 +588,10 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Green)),
         )
-        .data(&recent_data)
-        .bar_width(2)
-        .bar_gap(0)
-        .bar_style(Style::default().fg(Color::Green))
-        .value_style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(Color::Green))
+        .alignment(Alignment::Left);
     
-    f.render_widget(barchart, chunks[3]);
+    f.render_widget(activity_chart, chunks[4]);
     
     // Server time
     use chrono::Utc;
@@ -436,7 +608,59 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Green)),
         );
-    f.render_widget(time_widget, chunks[4]);
+    f.render_widget(time_widget, chunks[5]);
+}
+
+/// Render a vertical scroll bar indicator
+fn render_scroll_bar(f: &mut Frame, area: Rect, scroll_position: usize, total_items: usize, visible_items: usize) {
+    if total_items == 0 || visible_items >= total_items {
+        return; // No need for scroll bar
+    }
+    
+    let bar_height = area.height.saturating_sub(2) as usize; // Subtract borders
+    if bar_height == 0 {
+        return;
+    }
+    
+    // Calculate scroll bar position
+    let scroll_percentage = if total_items > visible_items {
+        let max_scroll = total_items.saturating_sub(visible_items);
+        let current_scroll = scroll_position.min(max_scroll);
+        1.0 - (current_scroll as f32 / max_scroll as f32)
+    } else {
+        1.0
+    };
+    
+    let bar_position = ((bar_height as f32) * scroll_percentage) as usize;
+    let bar_position = bar_position.min(bar_height.saturating_sub(1));
+    
+    // Render the scroll bar at the right edge of the area
+    let scroll_bar_x = area.x + area.width - 2;
+    
+    for i in 0..bar_height {
+        let y = area.y + 1 + i as u16;
+        let symbol = if i == bar_position {
+            "█"
+        } else {
+            "│"
+        };
+        
+        let style = if i == bar_position {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        
+        f.render_widget(
+            Paragraph::new(symbol).style(style),
+            Rect {
+                x: scroll_bar_x,
+                y,
+                width: 1,
+                height: 1,
+            }
+        );
+    }
 }
 
 /// Format bytes into human-readable format
@@ -454,4 +678,114 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{}B", bytes)
     }
+}
+
+/// Wrap text to fit within a specific width
+fn wrap_text(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return text.to_string();
+    }
+    
+    let mut result = String::new();
+    let mut current_line_len = 0;
+    
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+        
+        if current_line_len == 0 {
+            // First word on the line
+            result.push_str(word);
+            current_line_len = word_len;
+        } else if current_line_len + 1 + word_len <= max_width {
+            // Word fits on current line
+            result.push(' ');
+            result.push_str(word);
+            current_line_len += 1 + word_len;
+        } else {
+            // Word doesn't fit, start new line
+            result.push('\n');
+            result.push_str(word);
+            current_line_len = word_len;
+        }
+    }
+    
+    result
+}
+
+/// Wrap message content into multiple lines
+fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+    
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_len = 0;
+    
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+        
+        // If word itself is longer than max_width, break it up
+        if word_len > max_width {
+            if !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = String::new();
+                current_len = 0;
+            }
+            
+            // Break long word into chunks
+            let chars: Vec<char> = word.chars().collect();
+            for chunk in chars.chunks(max_width) {
+                lines.push(chunk.iter().collect());
+            }
+            continue;
+        }
+        
+        if current_len == 0 {
+            // First word on the line
+            current_line.push_str(word);
+            current_len = word_len;
+        } else if current_len + 1 + word_len <= max_width {
+            // Word fits on current line
+            current_line.push(' ');
+            current_line.push_str(word);
+            current_len += 1 + word_len;
+        } else {
+            // Word doesn't fit, start new line
+            lines.push(current_line);
+            current_line = word.to_string();
+            current_len = word_len;
+        }
+    }
+    
+    // Don't forget the last line
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    
+    // Return at least one line even if empty
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    
+    lines
+}
+
+/// Create a sparkline visualization using Braille characters
+fn create_sparkline(data: &[u64], max_value: u64) -> String {
+    // Braille characters for 9 levels (0-8)
+    const BRAILLE_CHARS: [&str; 9] = [" ", "⡀", "⡄", "⡆", "⡇", "⣇", "⣧", "⣷", "⣿"];
+    
+    if data.is_empty() || max_value == 0 {
+        return " ".repeat(30);
+    }
+    
+    data.iter()
+        .map(|&value| {
+            // Normalize to 0-8 range
+            let normalized = ((value as f64 / max_value as f64) * 8.0).round() as usize;
+            let index = normalized.min(8);
+            BRAILLE_CHARS[index]
+        })
+        .collect()
 }

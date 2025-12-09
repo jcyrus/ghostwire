@@ -3,9 +3,13 @@
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
 use futures_util::{SinkExt, StreamExt};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
     /// Successfully connected to server
@@ -33,6 +37,19 @@ pub enum NetworkEvent {
     
     /// Error occurred
     Error { message: String },
+    
+    /// Latency update (round-trip time in milliseconds)
+    LatencyUpdate { latency_ms: u64 },
+    
+    /// Reconnecting to server
+    Reconnecting { attempt: u32, max_attempts: u32 },
+    
+    /// User typing status changed
+    TypingStatus {
+        username: String,
+        channel_id: String,
+        is_typing: bool,
+    },
 }
 
 /// Messages sent from the UI to the network task
@@ -44,6 +61,9 @@ pub enum NetworkCommand {
     /// Authenticate with username (for reconnection scenarios)
     #[allow(dead_code)]
     Authenticate { username: String },
+    
+    /// Send typing status
+    SendTypingStatus { channel_id: String, is_typing: bool },
     
     /// Disconnect from server
     Disconnect,
@@ -57,19 +77,66 @@ pub async fn network_task(
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     mut command_rx: mpsc::UnboundedReceiver<NetworkCommand>,
 ) {
-    // Attempt to connect to the server
-    let ws_stream = match connect_async(&server_url).await {
-        Ok((stream, _)) => {
-            let _ = event_tx.send(NetworkEvent::Connected);
-            stream
-        }
-        Err(e) => {
-            let _ = event_tx.send(NetworkEvent::Error {
-                message: format!("Failed to connect: {}", e),
+    // Auto-reconnect configuration
+    let max_attempts = 10;
+    let initial_backoff_secs = 1;
+    let max_backoff_secs = 16;
+    
+    let mut attempt = 0;
+    let mut should_reconnect = true;
+    
+    while should_reconnect {
+        attempt += 1;
+        
+        if attempt > 1 {
+            // Send reconnecting event
+            let _ = event_tx.send(NetworkEvent::Reconnecting {
+                attempt,
+                max_attempts,
             });
-            return;
+            
+            // Calculate exponential backoff delay
+            let backoff_secs = std::cmp::min(
+                initial_backoff_secs * 2u64.pow((attempt - 2) as u32),
+                max_backoff_secs
+            );
+            
+            tracing::info!(
+                "Reconnecting in {} seconds (attempt {}/{})",
+                backoff_secs,
+                attempt,
+                max_attempts
+            );
+            
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
         }
-    };
+        
+        // Attempt to connect to the server
+        let ws_stream = match connect_async(&server_url).await {
+            Ok((stream, _)) => {
+                tracing::info!("Successfully connected to server");
+                let _ = event_tx.send(NetworkEvent::Connected);
+                attempt = 0; // Reset attempt counter on successful connection
+                stream
+            }
+            Err(e) => {
+                tracing::error!("Failed to connect: {}", e);
+                let _ = event_tx.send(NetworkEvent::Error {
+                    message: format!("Failed to connect: {}", e),
+                });
+                
+                // Check if should retry
+                if attempt >= max_attempts {
+                    tracing::error!("Max reconnection attempts reached");
+                    let _ = event_tx.send(NetworkEvent::Error {
+                        message: "Max reconnection attempts reached. Please restart the client.".to_string(),
+                    });
+                    return;
+                }
+                
+                continue;
+            }
+        };
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -82,6 +149,7 @@ pub async fn network_task(
             sender: username.clone(),
             timestamp: chrono::Utc::now().timestamp(),
         },
+        is_typing: false,
     };
 
     if let Ok(json) = serde_json::to_string(&auth_msg) {
@@ -97,12 +165,25 @@ pub async fn network_task(
     let mut heartbeat = interval(Duration::from_secs(30));
     heartbeat.tick().await; // First tick completes immediately
 
+    // Track ping timestamps for latency measurement
+    let ping_timestamps: Arc<Mutex<HashMap<Vec<u8>, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mut ping_counter: u64 = 0;
+
     // Main network loop
     loop {
         tokio::select! {
             // Heartbeat - send ping to keep connection alive
             _ = heartbeat.tick() => {
-                if let Err(e) = write.send(Message::Ping(vec![])).await {
+                // Create a unique ping payload with counter
+                ping_counter += 1;
+                let ping_data = ping_counter.to_le_bytes().to_vec();
+                
+                // Store timestamp before sending
+                if let Ok(mut timestamps) = ping_timestamps.lock() {
+                    timestamps.insert(ping_data.clone(), Instant::now());
+                }
+                
+                if let Err(e) = write.send(Message::Ping(ping_data)).await {
                     let _ = event_tx.send(NetworkEvent::Error {
                         message: format!("Failed to send heartbeat: {}", e),
                     });
@@ -132,9 +213,15 @@ pub async fn network_task(
                             break;
                         }
                     }
-                    Ok(Message::Pong(_)) => {
-                        // Server responded to our ping - connection is alive
-                        // No action needed, just continue
+                    Ok(Message::Pong(data)) => {
+                        // Server responded to our ping - calculate round-trip time
+                        if let Ok(mut timestamps) = ping_timestamps.lock() {
+                            if let Some(sent_time) = timestamps.remove(&data) {
+                                let rtt = sent_time.elapsed();
+                                let latency_ms = rtt.as_millis() as u64;
+                                let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
+                            }
+                        }
                     }
                     Ok(Message::Close(_)) => {
                         let _ = event_tx.send(NetworkEvent::Disconnected);
@@ -162,6 +249,7 @@ pub async fn network_task(
                                 sender: username.clone(),
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
+                            is_typing: false,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -182,6 +270,7 @@ pub async fn network_task(
                                 sender: new_username,
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
+                            is_typing: false,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -192,19 +281,51 @@ pub async fn network_task(
                             }
                         }
                     }
+                    NetworkCommand::SendTypingStatus { channel_id, is_typing } => {
+                        let msg = WireMessage {
+                            msg_type: MessageType::Typing,
+                            payload: String::new(),
+                            channel: channel_id,
+                            meta: MessageMeta {
+                                sender: username.clone(),
+                                timestamp: chrono::Utc::now().timestamp(),
+                            },
+                            is_typing,
+                        };
+
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if let Err(e) = write.send(Message::Text(json)).await {
+                                tracing::debug!("Failed to send typing status: {}", e);
+                            }
+                        }
+                    }
                     NetworkCommand::Disconnect => {
+                        tracing::info!("Received disconnect command");
                         let _ = write.send(Message::Close(None)).await;
+                        should_reconnect = false;
                         break;
                     }
                 }
             }
 
             // If both channels are closed, exit
-            else => break,
+            else => {
+                should_reconnect = false;
+                break;
+            }
         }
     }
 
+    // Send disconnected event and loop back to reconnect if needed
     let _ = event_tx.send(NetworkEvent::Disconnected);
+    
+    if !should_reconnect {
+        tracing::info!("Network task exiting (no reconnect)");
+        break;
+    }
+    
+    tracing::info!("Connection lost, will attempt to reconnect");
+    }
 }
 
 /// Handle a wire message and convert it to a NetworkEvent
@@ -241,6 +362,14 @@ fn handle_wire_message(
             // User authenticated - add them to roster
             let username = msg.meta.sender.clone();
             let _ = event_tx.send(NetworkEvent::UserJoined { username });
+        }
+        MessageType::Typing => {
+            // User typing status changed
+            let _ = event_tx.send(NetworkEvent::TypingStatus {
+                username: msg.meta.sender,
+                channel_id: msg.channel,
+                is_typing: msg.is_typing,
+            });
         }
     }
 }

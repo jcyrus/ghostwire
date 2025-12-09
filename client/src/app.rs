@@ -21,6 +21,8 @@ pub enum MessageType {
     Auth,
     #[serde(rename = "SYS")]
     System,
+    #[serde(rename = "TYPING")]
+    Typing,
 }
 
 /// Metadata for each message
@@ -40,11 +42,22 @@ pub struct WireMessage {
     #[serde(default = "default_channel")]
     pub channel: String,
     pub meta: MessageMeta,
+    /// For TYPING messages: true = typing, false = stopped typing
+    #[serde(default)]
+    pub is_typing: bool,
 }
 
 /// Default channel is global for backward compatibility
 fn default_channel() -> String {
     "global".to_string()
+}
+
+/// Message severity for system messages (errors, warnings, info)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageSeverity {
+    Info,
+    Warning,
+    Error,
 }
 
 /// Internal chat message representation
@@ -54,6 +67,7 @@ pub struct ChatMessage {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     pub is_system: bool,
+    pub severity: Option<MessageSeverity>,
 }
 
 impl ChatMessage {
@@ -63,11 +77,28 @@ impl ChatMessage {
             content,
             timestamp: Utc::now(),
             is_system,
+            severity: None,
         }
     }
 
     pub fn system(content: String) -> Self {
-        Self::new("SYSTEM".to_string(), content, true)
+        Self {
+            sender: "SYSTEM".to_string(),
+            content,
+            timestamp: Utc::now(),
+            is_system: true,
+            severity: Some(MessageSeverity::Info),
+        }
+    }
+    
+    pub fn system_with_severity(content: String, severity: MessageSeverity) -> Self {
+        Self {
+            sender: "SYSTEM".to_string(),
+            content,
+            timestamp: Utc::now(),
+            is_system: true,
+            severity: Some(severity),
+        }
     }
 }
 
@@ -125,6 +156,8 @@ pub struct Channel {
     pub messages: VecDeque<ChatMessage>,
     /// Number of unread messages
     pub unread_count: usize,
+    /// Users currently typing in this channel (username -> last typing timestamp)
+    pub typing_users: std::collections::HashMap<String, std::time::Instant>,
 }
 
 impl Channel {
@@ -135,6 +168,7 @@ impl Channel {
             channel_type: ChannelType::Global,
             messages: VecDeque::with_capacity(MAX_MESSAGES),
             unread_count: 0,
+            typing_users: std::collections::HashMap::new(),
         }
     }
     
@@ -152,6 +186,7 @@ impl Channel {
             channel_type: ChannelType::DirectMessage { other_user },
             messages: VecDeque::with_capacity(MAX_MESSAGES),
             unread_count: 0,
+            typing_users: std::collections::HashMap::new(),
         }
     }
     
@@ -164,6 +199,7 @@ impl Channel {
             channel_type: ChannelType::Group { name: name.clone(), members },
             messages: VecDeque::with_capacity(MAX_MESSAGES),
             unread_count: 0,
+            typing_users: std::collections::HashMap::new(),
         }
     }
     
@@ -198,6 +234,10 @@ pub struct Telemetry {
     pub latency_ms: u64,
     /// Network activity history (messages per second over last 60 seconds)
     pub network_activity: Vec<u64>,
+    /// Current frames per second
+    pub fps: f64,
+    /// Memory usage in bytes
+    pub memory_usage: u64,
 }
 
 impl Default for Telemetry {
@@ -210,6 +250,8 @@ impl Default for Telemetry {
             connection_uptime: 0,
             latency_ms: 0,
             network_activity: vec![0; 60], // 60 seconds of history
+            fps: 0.0,
+            memory_usage: 0,
         }
     }
 }
@@ -219,6 +261,50 @@ impl Default for Telemetry {
 pub enum InputMode {
     Normal,   // Navigation mode
     Editing,  // Typing a message
+}
+
+/// Timestamp display format
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimestampFormat {
+    /// 24-hour format: 14:30:45
+    Time24h,
+    /// 12-hour format: 2:30:45 PM
+    Time12h,
+    /// Date and time: 2025-12-05 14:30:45
+    DateTime,
+    /// Relative time: "2 minutes ago"
+    Relative,
+}
+
+impl TimestampFormat {
+    /// Format a timestamp according to this format
+    pub fn format(&self, timestamp: &DateTime<Utc>) -> String {
+        match self {
+            TimestampFormat::Time24h => timestamp.format("%H:%M:%S").to_string(),
+            TimestampFormat::Time12h => timestamp.format("%I:%M:%S %p").to_string(),
+            TimestampFormat::DateTime => timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+            TimestampFormat::Relative => {
+                let now = Utc::now();
+                let duration = now.signed_duration_since(*timestamp);
+                
+                if duration.num_seconds() < 60 {
+                    "just now".to_string()
+                } else if duration.num_minutes() < 60 {
+                    format!("{}m ago", duration.num_minutes())
+                } else if duration.num_hours() < 24 {
+                    format!("{}h ago", duration.num_hours())
+                } else {
+                    format!("{}d ago", duration.num_days())
+                }
+            }
+        }
+    }
+}
+
+impl Default for TimestampFormat {
+    fn default() -> Self {
+        TimestampFormat::Time24h
+    }
 }
 
 /// Main application state
@@ -261,6 +347,18 @@ pub struct App {
     
     /// Should quit the application
     pub should_quit: bool,
+    
+    /// Timestamp display format
+    pub timestamp_format: TimestampFormat,
+    
+    /// Last time we sent a typing indicator
+    pub last_typing_sent: Option<std::time::Instant>,
+    
+    /// Frame timing for FPS calculation (stores last 10 frame times)
+    pub frame_times: VecDeque<std::time::Duration>,
+    
+    /// Last frame render time
+    pub last_frame_time: Option<std::time::Instant>,
 }
 
 impl App {
@@ -290,6 +388,10 @@ impl App {
             telemetry: Telemetry::default(),
             is_connected: false,
             should_quit: false,
+            timestamp_format: TimestampFormat::default(),
+            last_typing_sent: None,
+            frame_times: VecDeque::with_capacity(10),
+            last_frame_time: None,
         }
     }
     
@@ -297,8 +399,11 @@ impl App {
     pub fn add_message(&mut self, message: ChatMessage) {
         if let Some(channel) = self.channels.get_mut(&self.active_channel) {
             channel.add_message(message);
-            // Auto-scroll to bottom
-            self.scroll_to_bottom();
+            
+            // Auto-scroll to bottom only if already at/near bottom (within 5 messages)
+            if self.scroll_position <= 5 {
+                self.scroll_to_bottom();
+            }
         }
     }
     
@@ -328,7 +433,10 @@ impl App {
             if channel_id != self.active_channel {
                 channel.unread_count += 1;
             } else {
-                self.scroll_to_bottom();
+                // Auto-scroll to bottom only if already at/near bottom (within 5 messages)
+                if self.scroll_position <= 5 {
+                    self.scroll_to_bottom();
+                }
             }
         }
     }
@@ -427,28 +535,27 @@ impl App {
         input
     }
     
-    /// Scroll chat up
+    /// Scroll chat up (away from bottom, into history)
     pub fn scroll_up(&mut self) {
-        if self.scroll_position > 0 {
-            self.scroll_position -= 1;
-        }
+        // Scroll up by 3 lines for better responsiveness
+        self.scroll_position = self.scroll_position.saturating_add(3);
     }
     
-    /// Scroll chat down
+    /// Scroll chat down (toward bottom, toward latest)
     pub fn scroll_down(&mut self) {
-        if let Some(channel) = self.channels.get(&self.active_channel) {
-            let max_scroll = channel.messages.len().saturating_sub(1);
-            if self.scroll_position < max_scroll {
-                self.scroll_position += 1;
-            }
-        }
+        // Scroll down by 3 lines
+        self.scroll_position = self.scroll_position.saturating_sub(3);
     }
     
-    /// Scroll to bottom of chat
+    /// Scroll to bottom of chat (latest messages)
     pub fn scroll_to_bottom(&mut self) {
-        if let Some(channel) = self.channels.get(&self.active_channel) {
-            self.scroll_position = channel.messages.len().saturating_sub(1);
-        }
+        self.scroll_position = 0;
+    }
+    
+    /// Scroll to top of chat (oldest messages)
+    pub fn scroll_to_top(&mut self) {
+        // Set to a very large number - the rendering will clamp it
+        self.scroll_position = 100000;
     }
     
     /// Get list of channel IDs sorted for display
@@ -570,6 +677,113 @@ impl App {
     #[allow(dead_code)]
     pub fn update_latency(&mut self, latency_ms: u64) {
         self.telemetry.latency_ms = latency_ms;
+    }
+    
+    /// Check if we should send a typing indicator (throttle to max 1 per second)
+    pub fn should_send_typing_indicator(&self) -> bool {
+        if let Some(last_sent) = self.last_typing_sent {
+            last_sent.elapsed() >= std::time::Duration::from_secs(1)
+        } else {
+            true
+        }
+    }
+    
+    /// Mark that we sent a typing indicator
+    pub fn mark_typing_sent(&mut self) {
+        self.last_typing_sent = Some(std::time::Instant::now());
+    }
+    
+    /// Set a user's typing state in a channel
+    pub fn set_user_typing(&mut self, channel_id: &str, username: &str, is_typing: bool) {
+        if let Some(channel) = self.channels.get_mut(channel_id) {
+            if is_typing {
+                channel.typing_users.insert(username.to_string(), std::time::Instant::now());
+            } else {
+                channel.typing_users.remove(username);
+            }
+        }
+    }
+    
+    /// Clean up stale typing indicators (older than 3 seconds)
+    pub fn cleanup_typing_indicators(&mut self) {
+        let timeout = std::time::Duration::from_secs(3);
+        let now = std::time::Instant::now();
+        
+        for channel in self.channels.values_mut() {
+            channel.typing_users.retain(|_, last_time| {
+                now.duration_since(*last_time) < timeout
+            });
+        }
+    }
+    
+    /// Get list of users typing in active channel (excluding self)
+    pub fn get_typing_users(&self) -> Vec<String> {
+        if let Some(channel) = self.channels.get(&self.active_channel) {
+            channel.typing_users
+                .keys()
+                .filter(|user| *user != &self.username)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Get total number of messages in active channel
+    pub fn get_total_messages(&self) -> usize {
+        if let Some(channel) = self.channels.get(&self.active_channel) {
+            channel.messages.len()
+        } else {
+            0
+        }
+    }
+    
+    /// Check if scrolled to bottom of active channel
+    #[allow(dead_code)]
+    pub fn is_at_bottom(&self) -> bool {
+        self.scroll_position == 0
+    }
+    
+    /// Get number of messages below current scroll position
+    pub fn get_messages_below(&self) -> usize {
+        self.scroll_position
+    }
+    
+    /// Update frame timing and calculate FPS
+    pub fn update_frame_time(&mut self) {
+        let now = std::time::Instant::now();
+        
+        if let Some(last_time) = self.last_frame_time {
+            let frame_duration = now.duration_since(last_time);
+            
+            // Add to frame times buffer
+            self.frame_times.push_back(frame_duration);
+            
+            // Keep only last 10 frames for rolling average
+            if self.frame_times.len() > 10 {
+                self.frame_times.pop_front();
+            }
+            
+            // Calculate average frame time and FPS
+            if !self.frame_times.is_empty() {
+                let total_time: std::time::Duration = self.frame_times.iter().sum();
+                let avg_frame_time = total_time.as_secs_f64() / self.frame_times.len() as f64;
+                
+                // Calculate FPS (avoiding division by zero)
+                if avg_frame_time > 0.0 {
+                    self.telemetry.fps = 1.0 / avg_frame_time;
+                }
+            }
+        }
+        
+        self.last_frame_time = Some(now);
+    }
+    
+    /// Update memory usage using sysinfo
+    pub fn update_memory_usage(&mut self, system: &sysinfo::System, pid: sysinfo::Pid) {
+        if let Some(process) = system.process(pid) {
+            self.telemetry.memory_usage = process.memory();
+        }
     }
     
     /// Quit the application

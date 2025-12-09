@@ -28,16 +28,19 @@ GhostWire now supports **multiple channels** including:
 | `J` (Shift+j) | Select next user             |
 | `K` (Shift+k) | Select previous user         |
 
-### Chat Controls (Unchanged)
+### Chat Controls
 
-| Key            | Action                |
-| -------------- | --------------------- |
-| `i` or `Enter` | Enter edit mode       |
-| `Esc`          | Exit edit mode / Quit |
-| `q`            | Quit application      |
-| `j` or `↓`     | Scroll down           |
-| `k` or `↑`     | Scroll up             |
-| `G`            | Scroll to bottom      |
+| Key            | Action                           |
+| -------------- | -------------------------------- |
+| `i` or `Enter` | Enter edit mode                  |
+| `Esc`          | Exit edit mode / Quit            |
+| `q`            | Quit application                 |
+| `j` or `↓`     | Scroll down (one line)           |
+| `k` or `↑`     | Scroll up (one line)             |
+| `PageDown`     | Scroll down (page)               |
+| `PageUp`       | Scroll up (page)                 |
+| `G`            | Jump to bottom (latest messages) |
+| `g`            | Jump to top (oldest messages)    |
 
 ---
 

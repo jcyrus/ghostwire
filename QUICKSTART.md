@@ -67,9 +67,17 @@ You should see the TUI with:
 
 - `i` or `Enter` - Enter edit mode (start typing)
 - `q` or `Esc` - Quit application
-- `j` or `↓` - Scroll chat down
-- `k` or `↑` - Scroll chat up
-- `G` - Scroll to bottom
+- `j` or `↓` - Scroll down (one line)
+- `k` or `↑` - Scroll up (one line)
+- `PageDown` - Scroll down (page)
+- `PageUp` - Scroll up (page)
+- `G` - Jump to bottom (latest messages)
+- `g` - Jump to top (oldest messages)
+- `h/l` or `←/→` - Navigate channels
+- `Tab` - Activate selected channel
+- `#` - Jump to global channel
+- `d` - Create DM with selected user
+- `J/K` - Select user (for DM creation)
 
 **Edit Mode (Typing):**
 

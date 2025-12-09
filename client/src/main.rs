@@ -5,11 +5,15 @@
 // - Communication: mpsc unbounded channels
 
 mod app;
+mod config;
+mod errors;
+mod logging;
 mod network;
 mod ui;
 
 use app::{App, ChatMessage, InputMode, User};
 use chrono::Utc;
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -27,26 +31,56 @@ use tokio::sync::mpsc;
 /// Default server URL (can be overridden via CLI args)
 const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
 
+/// GhostWire - Ephemeral terminal chat client
+#[derive(Parser)]
+#[command(name = "ghostwire")]
+#[command(author, version, about, long_about = None)]
+#[command(after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           Switch between chat and input modes\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit")]
+struct Cli {
+    /// Username for the chat session (default: random ghost_XXXXXXXX)
+    #[arg(value_name = "USERNAME")]
+    username: Option<String>,
+
+    /// WebSocket server URL
+    #[arg(value_name = "SERVER_URL", default_value = DEFAULT_SERVER_URL)]
+    server_url: String,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
+    // Initialize logging system
+    if let Err(e) = logging::init_logging() {
+        eprintln!("Warning: Could not initialize logging: {}", e);
+    }
     
-    let username = if args.len() > 1 {
-        args[1].clone()
-    } else {
+    // Load configuration from file (or create default)
+    let config = config::load_config().unwrap_or_else(|e| {
+        eprintln!("Warning: Could not load config: {}. Using defaults.", e);
+        tracing::warn!("Could not load config: {}. Using defaults.", e);
+        config::GhostWireConfig::default()
+    });
+    
+    tracing::info!("GhostWire client starting");
+    tracing::info!("Server URL: {}", config.default_server_url);
+    
+    // Parse command line arguments using clap
+    let cli = Cli::parse();
+    
+    let username = cli.username.unwrap_or_else(|| {
         // Generate a random username if none provided
         format!("ghost_{}", &uuid::Uuid::new_v4().to_string()[..8])
-    };
+    });
     
-    let server_url = if args.len() > 2 {
-        args[2].clone()
+    // CLI args override config file
+    let server_url = if cli.server_url != DEFAULT_SERVER_URL {
+        cli.server_url
     } else {
-        DEFAULT_SERVER_URL.to_string()
+        config.default_server_url.clone()
     };
 
-    // Create the application state
+    // Create the application state with configuration
     let mut app = App::new(username.clone());
+    app.timestamp_format = config.timestamp_format.clone();
 
     // Create channels for communication between UI and network task
     // event_rx: UI receives events from network
@@ -56,14 +90,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn the network task in a separate async runtime
     // This is the CRITICAL async/sync split!
+    tracing::debug!("Spawning network task for user: {}", username);
     let network_handle = tokio::spawn(network::network_task(
-        server_url,
+        server_url.clone(),
         username.clone(),
         event_tx,
         command_rx,
     ));
 
     // Setup terminal for TUI
+    tracing::debug!("Initializing terminal UI");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -71,9 +107,11 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Main UI loop (synchronous, runs on main thread)
+    tracing::info!("Starting main UI loop");
     let result = run_ui_loop(&mut terminal, &mut app, &mut event_rx, &command_tx);
 
     // Cleanup: Restore terminal
+    tracing::debug!("Cleaning up terminal");
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -83,14 +121,17 @@ async fn main() -> anyhow::Result<()> {
     terminal.show_cursor()?;
 
     // Shutdown network task
+    tracing::debug!("Shutting down network task");
     let _ = command_tx.send(NetworkCommand::Disconnect);
     let _ = network_handle.await;
 
     // Print any errors
     if let Err(err) = result {
+        tracing::error!("Application error: {:?}", err);
         eprintln!("Error: {:?}", err);
     }
 
+    tracing::info!("GhostWire client shutdown complete");
     Ok(())
 }
 
@@ -104,7 +145,22 @@ fn run_ui_loop(
     // Track uptime
     let mut last_uptime_update = Instant::now();
     
+    // Initialize sysinfo for memory tracking
+    let mut system = sysinfo::System::new_all();
+    let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
+    let mut last_memory_update = Instant::now();
+    
     loop {
+        // Update frame timing for FPS calculation
+        app.update_frame_time();
+        
+        // Update memory usage every 500ms (don't need it every frame)
+        if last_memory_update.elapsed() >= Duration::from_millis(500) {
+            system.refresh_process(pid);
+            app.update_memory_usage(&system, pid);
+            last_memory_update = Instant::now();
+        }
+        
         // Render the UI
         terminal.draw(|f| ui::render(f, app))?;
 
@@ -124,6 +180,7 @@ fn run_ui_loop(
         if last_uptime_update.elapsed() >= Duration::from_secs(1) {
             app.increment_uptime(1);
             app.update_network_activity();
+            app.cleanup_typing_indicators();
             last_uptime_update = Instant::now();
         }
         
@@ -161,9 +218,20 @@ fn handle_key_event(
                 KeyCode::Char('k') | KeyCode::Up => {
                     app.scroll_up();
                 }
+                // Page scrolling (scroll by ~20 lines)
+                KeyCode::PageDown => {
+                    app.scroll_position = app.scroll_position.saturating_sub(20);
+                }
+                KeyCode::PageUp => {
+                    app.scroll_position = app.scroll_position.saturating_add(20);
+                }
                 // Scroll to bottom
                 KeyCode::Char('G') => {
                     app.scroll_to_bottom();
+                }
+                // Scroll to top
+                KeyCode::Char('g') => {
+                    app.scroll_to_top();
                 }
                 
                 // Channel navigation
@@ -217,16 +285,40 @@ fn handle_key_event(
                         
                         // Update telemetry
                         app.telemetry.messages_sent += 1;
+                        
+                        // Stop typing indicator when sending
+                        let _ = command_tx.send(NetworkCommand::SendTypingStatus {
+                            channel_id: app.active_channel.clone(),
+                            is_typing: false,
+                        });
                     }
                     app.exit_edit_mode();
                 }
                 // Character input
                 KeyCode::Char(c) => {
                     app.input_char(c);
+                    
+                    // Send typing indicator (throttled to 1 per second)
+                    if app.should_send_typing_indicator() {
+                        let _ = command_tx.send(NetworkCommand::SendTypingStatus {
+                            channel_id: app.active_channel.clone(),
+                            is_typing: true,
+                        });
+                        app.mark_typing_sent();
+                    }
                 }
                 // Backspace
                 KeyCode::Backspace => {
                     app.input_backspace();
+                    
+                    // Send typing indicator if not empty
+                    if !app.input.is_empty() && app.should_send_typing_indicator() {
+                        let _ = command_tx.send(NetworkCommand::SendTypingStatus {
+                            channel_id: app.active_channel.clone(),
+                            is_typing: true,
+                        });
+                        app.mark_typing_sent();
+                    }
                 }
                 // Cursor movement
                 KeyCode::Left => {
@@ -247,12 +339,15 @@ fn handle_key_event(
 fn handle_network_event(app: &mut App, event: NetworkEvent) {
     match event {
         NetworkEvent::Connected => {
+            tracing::info!("Connected to server");
             app.set_connected(true);
         }
         NetworkEvent::Disconnected => {
+            tracing::warn!("Disconnected from server");
             app.set_connected(false);
         }
         NetworkEvent::Message { sender, content, timestamp, channel_id } => {
+            tracing::debug!("Received message from {} in channel {}", sender, channel_id);
             // Convert Unix timestamp to DateTime
             let datetime = chrono::DateTime::from_timestamp(timestamp, 0)
                 .unwrap_or_else(Utc::now);
@@ -283,7 +378,35 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             app.add_message(ChatMessage::system(content));
         }
         NetworkEvent::Error { message } => {
-            app.add_message(ChatMessage::system(format!("Error: {}", message)));
+            // Parse error and create user-friendly message
+            let user_error = errors::parse_error(&message);
+            tracing::warn!("Error: {} (severity: {:?})", message, user_error.severity);
+            
+            // Map error severity to message severity
+            let msg_severity = match user_error.severity {
+                errors::ErrorSeverity::Info => app::MessageSeverity::Info,
+                errors::ErrorSeverity::Warning => app::MessageSeverity::Warning,
+                errors::ErrorSeverity::Error | errors::ErrorSeverity::Critical => app::MessageSeverity::Error,
+            };
+            
+            // Add formatted error message to chat
+            app.add_message(ChatMessage::system_with_severity(
+                user_error.format_for_ui(),
+                msg_severity
+            ));
+        }
+        NetworkEvent::LatencyUpdate { latency_ms } => {
+            app.update_latency(latency_ms);
+        }
+        NetworkEvent::Reconnecting { attempt, max_attempts } => {
+            tracing::info!("Reconnecting: attempt {}/{}", attempt, max_attempts);
+            app.add_message(ChatMessage::system(
+                format!("Reconnecting... (attempt {}/{})", attempt, max_attempts)
+            ));
+        }
+        NetworkEvent::TypingStatus { username, channel_id, is_typing } => {
+            tracing::debug!("User {} typing status: {} in channel {}", username, is_typing, channel_id);
+            app.set_user_typing(&channel_id, &username, is_typing);
         }
     }
 }

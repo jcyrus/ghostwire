@@ -76,6 +76,43 @@ cargo build --release -p ghostwire-client
 
 ```
 
+### 🔄 Updating GhostWire
+
+To update to the latest version, simply re-run the installation command:
+
+**Linux / macOS:**
+
+```bash
+curl -sL https://ghost.jcyrus.com/install | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://ghost.jcyrus.com/install.ps1 | iex
+```
+
+The installer will automatically:
+
+- Download the latest release
+- Replace your existing binary
+- Preserve your installation location
+
+**Manual Update (from source):**
+
+```bash
+cd GhostWire
+git pull origin main
+cargo build --release -p ghostwire-client
+# Binary is at ./target/release/ghostwire
+```
+
+**Check your current version:**
+
+```bash
+ghostwire --version  # Coming soon in v0.2.0
+```
+
 ---
 
 ## 🚀 Usage
@@ -95,15 +132,27 @@ ghostwire your_username ws://localhost:8080/ws
 
 ### Controls
 
+**Message Mode:**
+
 - **`i` or `Enter`**: Enter message mode
-- **`Esc`**: Exit message mode / Quit
-- **`q`**: Quit (in normal mode)
-- **`j/k` or `↓/↑`**: Scroll chat
+- **`Esc`**: Exit message mode
+- **`Enter`**: Send message
+
+**Navigation:**
+
+- **`Esc` or `q`**: Quit (in normal mode)
 - **`h/l` or `←/→`**: Navigate channels
 - **`Tab`**: Activate selected channel
 - **`#`**: Jump to global channel
 - **`d`**: Create DM with selected user
 - **`J/K`**: Select user (for DM creation)
+
+**Scrolling:**
+
+- **`j/k` or `↓/↑`**: Scroll down/up (one line)
+- **`PageDown/PageUp`**: Scroll down/up (page)
+- **`G`**: Jump to bottom (latest messages)
+- **`g`**: Jump to top (oldest messages)
 
 ---
 

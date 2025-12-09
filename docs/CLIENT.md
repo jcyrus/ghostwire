@@ -155,15 +155,23 @@ UI Thread                Network Thread
 
 ### Normal Mode (Default)
 
-| Key            | Action               |
-| -------------- | -------------------- |
-| `i` or `Enter` | Enter edit mode      |
-| `q` or `Esc`   | Quit application     |
-| `j` or `↓`     | Scroll chat down     |
-| `k` or `↑`     | Scroll chat up       |
-| `h` or `←`     | Select previous user |
-| `l` or `→`     | Select next user     |
-| `G`            | Scroll to bottom     |
+| Key            | Action                           |
+| -------------- | -------------------------------- |
+| `i` or `Enter` | Enter edit mode                  |
+| `q` or `Esc`   | Quit application                 |
+| `j` or `↓`     | Scroll down (one line)           |
+| `k` or `↑`     | Scroll up (one line)             |
+| `PageDown`     | Scroll down (page)               |
+| `PageUp`       | Scroll up (page)                 |
+| `G`            | Jump to bottom (latest messages) |
+| `g`            | Jump to top (oldest messages)    |
+| `h` or `←`     | Navigate to previous channel     |
+| `l` or `→`     | Navigate to next channel         |
+| `Tab`          | Activate selected channel        |
+| `#`            | Jump to global channel           |
+| `d`            | Create DM with selected user     |
+| `J`            | Select next user                 |
+| `K`            | Select previous user             |
 
 ### Edit Mode (Typing)
 
