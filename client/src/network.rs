@@ -150,6 +150,8 @@ pub async fn network_task(
             timestamp: chrono::Utc::now().timestamp(),
         },
         is_typing: false,
+        encrypted: false,
+        recipient: None,
     };
 
     if let Ok(json) = serde_json::to_string(&auth_msg) {
@@ -250,6 +252,8 @@ pub async fn network_task(
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
                             is_typing: false,
+                            encrypted: false, // TODO: Encrypt in v0.3.0
+                            recipient: None,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -271,6 +275,8 @@ pub async fn network_task(
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
                             is_typing: false,
+                            encrypted: false,
+                            recipient: None,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -291,6 +297,8 @@ pub async fn network_task(
                                 timestamp: chrono::Utc::now().timestamp(),
                             },
                             is_typing,
+                            encrypted: false,
+                            recipient: None,
                         };
 
                         if let Ok(json) = serde_json::to_string(&msg) {
@@ -370,6 +378,10 @@ fn handle_wire_message(
                 channel_id: msg.channel,
                 is_typing: msg.is_typing,
             });
+        }
+        MessageType::KeyExchange => {
+            // TODO: Handle key exchange in v0.3.0
+            tracing::debug!("Received key exchange from {}", msg.meta.sender);
         }
     }
 }

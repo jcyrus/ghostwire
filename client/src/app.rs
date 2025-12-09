@@ -23,6 +23,9 @@ pub enum MessageType {
     System,
     #[serde(rename = "TYPING")]
     Typing,
+    /// Key exchange message for E2EE (v0.3.0)
+    #[serde(rename = "KEY_EXCHANGE")]
+    KeyExchange,
 }
 
 /// Metadata for each message
@@ -37,6 +40,7 @@ pub struct MessageMeta {
 pub struct WireMessage {
     #[serde(rename = "type")]
     pub msg_type: MessageType,
+    /// Payload: plaintext for AUTH/SYS, base64 encrypted for MSG, public key for KEY_EXCHANGE
     pub payload: String,
     /// Channel ID: "global", "dm:user1:user2", or "group:name"
     #[serde(default = "default_channel")]
@@ -45,6 +49,12 @@ pub struct WireMessage {
     /// For TYPING messages: true = typing, false = stopped typing
     #[serde(default)]
     pub is_typing: bool,
+    /// Encryption status (v0.3.0): true if payload is encrypted
+    #[serde(default)]
+    pub encrypted: bool,
+    /// Recipient for encrypted messages (username or "all" for broadcast)
+    #[serde(default)]
+    pub recipient: Option<String>,
 }
 
 /// Default channel is global for backward compatibility

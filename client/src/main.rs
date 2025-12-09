@@ -6,7 +6,9 @@
 
 mod app;
 mod config;
+mod crypto;
 mod errors;
+mod keystore;
 mod logging;
 mod network;
 mod ui;
