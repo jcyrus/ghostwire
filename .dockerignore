@@ -1,0 +1,44 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Documentation
+docs/
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+ROADMAP.md
+QUICKSTART.md
+LICENSE
+CHANNELS.md
+
+# Client code (not needed for server, but keep Cargo.toml for workspace)
+client/src/
+client/assets/
+
+# Install scripts
+install.sh
+install.ps1
+
+# Shuttle config (no longer needed)
+server/Shuttle.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Testing
+test_results/
+coverage/

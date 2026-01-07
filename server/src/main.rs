@@ -1,4 +1,4 @@
-// GhostWire Server - Shuttle Entry Point
+// GhostWire Server - Fly.io Entry Point
 // This is the "dumb relay" server that knows nothing about message content
 
 mod relay;
@@ -13,8 +13,10 @@ use axum::{
     Router,
 };
 use relay::RelayState;
+use std::net::SocketAddr;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 /// Health check endpoint
 async fn health_check() -> &'static str {
@@ -52,7 +54,7 @@ async fn root(State(state): State<RelayState>) -> Html<String> {
     <div class="status">STATUS: ONLINE</div>
     <div class="info">
         <p>Connected Clients: {}</p>
-        <p>WebSocket Endpoint: <code>ws://ghost.jcyrus.com/ws</code></p>
+        <p>WebSocket Endpoint: <code>wss://ghostwire.fly.dev/ws</code></p>
     </div>
     <h2>Protocol</h2>
     <pre>{{
@@ -93,16 +95,27 @@ async fn install_ps1_redirect() -> impl IntoResponse {
     axum::response::Redirect::temporary("https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.ps1")
 }
 
-/// Main Shuttle entry point
-#[shuttle_runtime::main]
-async fn main() -> shuttle_axum::ShuttleAxum {
-    // Shuttle handles tracing initialization, so we don't need to do it here
+/// Main entry point for Fly.io deployment
+#[tokio::main]
+async fn main() {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                EnvFilter::new("info")
+                    .add_directive("ghostwire_server=debug".parse().expect("Invalid tracing directive"))
+                    .add_directive("tower_http=debug".parse().expect("Invalid tracing directive"))
+            }),
+        )
+        .init();
+
+    info!("🚀 Starting GhostWire Relay Server");
     
     // Create shared state
     let state = RelayState::new();
 
     // Build the router
-    let router = Router::new()
+    let app = Router::new()
         .route("/", get(root))
         .route("/health", get(health_check))
         .route("/ws", get(ws_handler))
@@ -114,5 +127,31 @@ async fn main() -> shuttle_axum::ShuttleAxum {
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         );
 
-    Ok(router.into())
+    // Get port from environment variable (Fly.io injects PORT)
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse::<u16>()
+        .unwrap_or_else(|e| {
+            tracing::error!("Invalid PORT value: {}. Using default 8080", e);
+            8080
+        });
+    
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    info!("👻 GhostWire Relay listening on http://{}", addr);
+    info!("📡 WebSocket endpoint: ws://{}/ws", addr);
+    info!("🌐 Status page: http://{}", addr);
+
+    // Start server
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to bind to {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Server error: {}", e);
+        std::process::exit(1);
+    }
 }

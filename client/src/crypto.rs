@@ -7,19 +7,11 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
     ChaCha20Poly1305, Nonce,
 };
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
-
-/// Identity keypair (Ed25519) - Long-term identity for verification
-#[derive(Clone)]
-pub struct IdentityKeypair {
-    pub signing_key: SigningKey,
-    pub verifying_key: VerifyingKey,
-}
 
 /// Ephemeral keypair (X25519) - Short-lived keys for ECDH key exchange
 #[derive(Clone)]
@@ -41,17 +33,6 @@ impl Drop for SessionKeys {
         self.encryption_key.zeroize();
         self.mac_key.zeroize();
         self.chain_key.zeroize();
-    }
-}
-
-/// Generate a new identity keypair (Ed25519)
-pub fn generate_identity_keypair() -> IdentityKeypair {
-    let signing_key = SigningKey::generate(&mut OsRng);
-    let verifying_key = signing_key.verifying_key();
-    
-    IdentityKeypair {
-        signing_key,
-        verifying_key,
     }
 }
 
@@ -142,40 +123,6 @@ pub fn decrypt_message(ciphertext_b64: &str, key: &[u8; 32]) -> Result<String> {
     String::from_utf8(plaintext).map_err(|e| anyhow!("Invalid UTF-8: {}", e))
 }
 
-/// Sign a message with Ed25519 identity key
-pub fn sign_message(message: &[u8], signing_key: &SigningKey) -> Signature {
-    signing_key.sign(message)
-}
-
-/// Verify a signature with Ed25519 public key
-pub fn verify_signature(
-    message: &[u8],
-    signature: &Signature,
-    verifying_key: &VerifyingKey,
-) -> Result<()> {
-    verifying_key
-        .verify(message, signature)
-        .map_err(|e| anyhow!("Signature verification failed: {}", e))
-}
-
-/// Compute safety number (fingerprint) for identity verification
-/// Returns a hex string for manual comparison between users
-pub fn compute_safety_number(
-    our_identity: &VerifyingKey,
-    their_identity: &VerifyingKey,
-) -> String {
-    use sha2::Digest;
-    
-    // Combine both public keys and hash
-    let mut hasher = Sha256::new();
-    hasher.update(our_identity.as_bytes());
-    hasher.update(their_identity.as_bytes());
-    let hash = hasher.finalize();
-    
-    // Take first 60 bits (15 hex chars) for display
-    hex::encode(&hash[..8])
-}
-
 /// Encode public key to base64 for wire transmission
 pub fn encode_public_key(public_key: &PublicKey) -> String {
     BASE64.encode(public_key.as_bytes())
@@ -197,37 +144,15 @@ pub fn decode_public_key(encoded: &str) -> Result<PublicKey> {
     Ok(PublicKey::from(key_bytes))
 }
 
-/// Encode Ed25519 verifying key to base64
-pub fn encode_verifying_key(key: &VerifyingKey) -> String {
-    BASE64.encode(key.as_bytes())
-}
-
-/// Decode Ed25519 verifying key from base64
-pub fn decode_verifying_key(encoded: &str) -> Result<VerifyingKey> {
-    let bytes = BASE64
-        .decode(encoded)
-        .map_err(|e| anyhow!("Invalid verifying key encoding: {}", e))?;
-    
-    VerifyingKey::from_bytes(
-        bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| anyhow!("Invalid verifying key length"))?,
-    )
-    .map_err(|e| anyhow!("Invalid verifying key: {}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[test]
     fn test_keypair_generation() {
-        let identity = generate_identity_keypair();
         let ephemeral = generate_ephemeral_keypair();
         
         // Keys should be non-zero
-        assert_ne!(identity.verifying_key.as_bytes(), &[0u8; 32]);
         assert_ne!(ephemeral.public.as_bytes(), &[0u8; 32]);
     }
     
@@ -261,15 +186,6 @@ mod tests {
         ).unwrap();
         
         assert_eq!(alice_keys.encryption_key, bob_keys.encryption_key);
-    }
-    
-    #[test]
-    fn test_signature() {
-        let identity = generate_identity_keypair();
-        let message = b"Test message";
-        
-        let signature = sign_message(message, &identity.signing_key);
-        verify_signature(message, &signature, &identity.verifying_key).unwrap();
     }
     
     #[test]

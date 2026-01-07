@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-01-08
+
+### Changed
+
+- **Infrastructure Migration**: Migrated from Shuttle.rs to Fly.io
+  - New production URL: `wss://ghostwire.fly.dev/ws`
+  - Improved deployment reliability and global availability
+  - Docker-based deployment with multi-stage builds
+  - Singapore region deployment with auto-scaling disabled for consistent availability
+  - Updated all documentation and install scripts with new URL
+
+### Fixed
+
+- **Security Hardening**: Production-ready security improvements
+  - Replaced unsafe `static mut` with `AtomicU64` for thread-safe network activity tracking
+  - Eliminated all mutex `.lock().unwrap()` panics with proper error handling
+  - Server now gracefully handles PORT parsing errors instead of panicking
+  - Removed all `expect()` calls that could crash the application
+- **Code Quality**: Removed unused future-feature code
+  - Removed Ed25519 identity verification infrastructure (not yet implemented)
+  - Removed unused key rotation and session cleanup methods
+  - Removed unused message expiry and secure deletion features
+  - Cleaned up 19 compiler warnings for production release
+  - Simplified codebase focuses only on actively-used E2EE features
+
+### Technical Details
+
+- **Deployment**:
+  - Added Dockerfile with Rust 1.75 builder and Debian bookworm-slim runtime
+  - Added fly.toml configuration with WebSocket optimizations
+  - Added .dockerignore for efficient builds
+  - Server binary size: ~15MB (release mode)
+- **Dependencies**:
+  - Removed dependency on shuttle-runtime and shuttle-axum
+  - Standard Tokio/Axum deployment pattern
+  - No changes to cryptographic dependencies
+
+### Developer Notes
+
+- Binary project now commits `Cargo.lock` for reproducible builds
+- Enhanced `.gitignore` to exclude `.shuttle/`, `*.log`, and `.env` files
+- All changes on `migrate-to-flyio` branch for clean git history
+
 ## [0.3.0] - 2025-12-09
 
 ### Added

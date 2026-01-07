@@ -3,38 +3,23 @@
 
 use crate::crypto::{
     decode_public_key, derive_session_keys, encode_public_key, generate_ephemeral_keypair,
-    generate_identity_keypair, EphemeralKeypair, IdentityKeypair, SessionKeys,
+    EphemeralKeypair, SessionKeys,
 };
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use x25519_dalek::PublicKey;
 
-/// Key rotation interval (24 hours)
-const KEY_ROTATION_INTERVAL: i64 = 24 * 60 * 60;
-
-/// Maximum age for a session key before it's considered stale
-const MAX_SESSION_AGE: i64 = 48 * 60 * 60;
-
 /// Peer session information
 pub struct PeerSession {
-    pub their_public_key: PublicKey,
     pub session_keys: SessionKeys,
-    pub created_at: DateTime<Utc>,
     pub last_message_at: DateTime<Utc>,
-    pub verified: bool, // True if identity has been verified
 }
 
 /// In-memory key store (ephemeral, cleared on exit)
 pub struct KeyStore {
-    /// Our long-term identity keypair (Ed25519)
-    pub identity: IdentityKeypair,
-    
     /// Our current ephemeral keypair (X25519)
     pub ephemeral: EphemeralKeypair,
-    
-    /// When our ephemeral key was created
-    ephemeral_created_at: DateTime<Utc>,
     
     /// Active sessions with peers (username -> session)
     sessions: HashMap<String, PeerSession>,
@@ -47,9 +32,7 @@ impl KeyStore {
     /// Create a new key store with fresh keys
     pub fn new() -> Self {
         Self {
-            identity: generate_identity_keypair(),
             ephemeral: generate_ephemeral_keypair(),
-            ephemeral_created_at: Utc::now(),
             sessions: HashMap::new(),
             pending_exchanges: HashMap::new(),
         }
@@ -58,22 +41,6 @@ impl KeyStore {
     /// Get our current ephemeral public key (base64 encoded)
     pub fn get_our_public_key(&self) -> String {
         encode_public_key(&self.ephemeral.public)
-    }
-    
-    /// Check if our ephemeral key needs rotation
-    pub fn needs_rotation(&self) -> bool {
-        let age = Utc::now() - self.ephemeral_created_at;
-        age.num_seconds() > KEY_ROTATION_INTERVAL
-    }
-    
-    /// Rotate our ephemeral keypair (forward secrecy)
-    pub fn rotate_ephemeral_key(&mut self) {
-        tracing::info!("Rotating ephemeral keypair for forward secrecy");
-        self.ephemeral = generate_ephemeral_keypair();
-        self.ephemeral_created_at = Utc::now();
-        
-        // Clear all sessions - they need to re-establish with new key
-        self.sessions.clear();
     }
     
     /// Store a peer's public key from key exchange message
@@ -98,13 +65,9 @@ impl KeyStore {
             b"GhostWire v0.3.0",
         )?;
         
-        let now = Utc::now();
         let session = PeerSession {
-            their_public_key: *their_public,
             session_keys,
-            created_at: now,
-            last_message_at: now,
-            verified: false,
+            last_message_at: Utc::now(),
         };
         
         self.sessions.insert(username.to_string(), session);
@@ -125,61 +88,6 @@ impl KeyStore {
     pub fn has_session(&self, username: &str) -> bool {
         self.sessions.contains_key(username)
     }
-    
-    /// Mark a peer's identity as verified (safety number confirmed)
-    pub fn verify_peer(&mut self, username: &str) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(username)
-            .ok_or_else(|| anyhow!("No session with peer: {}", username))?;
-        
-        session.verified = true;
-        tracing::info!("Verified identity of peer: {}", username);
-        Ok(())
-    }
-    
-    /// Check if a peer's identity has been verified
-    pub fn is_verified(&self, username: &str) -> bool {
-        self.sessions
-            .get(username)
-            .map(|s| s.verified)
-            .unwrap_or(false)
-    }
-    
-    /// Clean up stale sessions
-    pub fn cleanup_stale_sessions(&mut self) {
-        let now = Utc::now();
-        let threshold = Duration::seconds(MAX_SESSION_AGE);
-        
-        self.sessions.retain(|username, session| {
-            let age = now - session.created_at;
-            if age > threshold {
-                tracing::info!("Removing stale session with {}", username);
-                false
-            } else {
-                true
-            }
-        });
-    }
-    
-    /// Update last message time for a peer session
-    pub fn touch_session(&mut self, username: &str) {
-        if let Some(session) = self.sessions.get_mut(username) {
-            session.last_message_at = Utc::now();
-        }
-    }
-    
-    /// Get all active session usernames
-    pub fn active_sessions(&self) -> Vec<String> {
-        self.sessions.keys().cloned().collect()
-    }
-    
-    /// Clear all sessions (emergency)
-    pub fn clear_all_sessions(&mut self) {
-        tracing::warn!("Clearing all encryption sessions");
-        self.sessions.clear();
-        self.pending_exchanges.clear();
-    }
 }
 
 impl Default for KeyStore {
@@ -197,17 +105,6 @@ mod tests {
         let store = KeyStore::new();
         assert!(!store.get_our_public_key().is_empty());
         assert!(!store.has_session("alice"));
-    }
-    
-    #[test]
-    fn test_key_rotation() {
-        let mut store = KeyStore::new();
-        let old_key = store.get_our_public_key();
-        
-        store.rotate_ephemeral_key();
-        let new_key = store.get_our_public_key();
-        
-        assert_ne!(old_key, new_key);
     }
     
     #[test]

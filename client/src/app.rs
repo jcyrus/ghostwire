@@ -4,6 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum number of messages to keep in memory
 const MAX_MESSAGES: usize = 1000;
@@ -109,19 +110,6 @@ impl ChatMessage {
             severity: None,
             encrypted,
             expires_at: None,
-            id: uuid::Uuid::new_v4().to_string(),
-        }
-    }
-    
-    pub fn with_expiry(sender: String, content: String, encrypted: bool, ttl_seconds: i64) -> Self {
-        Self {
-            sender,
-            content,
-            timestamp: Utc::now(),
-            is_system: false,
-            severity: None,
-            encrypted,
-            expires_at: Some(Utc::now() + chrono::Duration::seconds(ttl_seconds)),
             id: uuid::Uuid::new_v4().to_string(),
         }
     }
@@ -732,11 +720,11 @@ impl App {
         self.telemetry.network_activity.rotate_left(1);
         if let Some(last) = self.telemetry.network_activity.last_mut() {
             // Store the delta (messages in last second)
-            static mut LAST_TOTAL: u64 = 0;
-            unsafe {
-                *last = current_total.saturating_sub(LAST_TOTAL);
-                LAST_TOTAL = current_total;
-            }
+            // Using AtomicU64 for thread-safe access without unsafe code
+            static LAST_TOTAL: AtomicU64 = AtomicU64::new(0);
+            let last_val = LAST_TOTAL.load(Ordering::Relaxed);
+            *last = current_total.saturating_sub(last_val);
+            LAST_TOTAL.store(current_total, Ordering::Relaxed);
         }
     }
     
@@ -878,27 +866,6 @@ impl App {
             if removed > 0 {
                 tracing::info!("Cleaned up {} expired messages in channel {}", removed, channel.id);
             }
-        }
-    }
-    
-    /// Securely delete a specific message by ID (v0.3.0)
-    pub fn secure_delete_message(&mut self, message_id: &str, channel_id: &str) -> bool {
-        if let Some(channel) = self.channels.get_mut(channel_id) {
-            if let Some(msg) = channel.messages.iter_mut().find(|m| m.id == message_id) {
-                msg.secure_delete();
-                tracing::info!("Securely deleted message {}", message_id);
-                return true;
-            }
-        }
-        false
-    }
-    
-    /// Get count of encrypted messages in active channel (for stats)
-    pub fn count_encrypted_messages(&self) -> usize {
-        if let Some(channel) = self.channels.get(&self.active_channel) {
-            channel.messages.iter().filter(|m| m.encrypted).count()
-        } else {
-            0
         }
     }
 }

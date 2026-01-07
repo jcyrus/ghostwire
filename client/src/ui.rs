@@ -60,18 +60,25 @@ fn render_channels(f: &mut Frame, app: &App, area: Rect) {
             if let Some(channel) = app.channels.get(channel_id) {
                 let display_name = channel.display_name();
                 
+                // Add indicator for active channel
+                let prefix = if channel_id == &app.active_channel {
+                    "▶ "
+                } else {
+                    "  "
+                };
+                
                 // Add unread count if any
                 let content = if channel.unread_count > 0 {
-                    format!("{} ({})", display_name, channel.unread_count)
+                    format!("{}{} ({})", prefix, display_name, channel.unread_count)
                 } else {
-                    display_name
+                    format!("{}{}", prefix, display_name)
                 };
                 
                 // Highlight active channel
                 let style = if channel_id == &app.active_channel {
                     Style::default()
                         .fg(Color::Black)
-                        .bg(Color::Green)
+                        .bg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
                 } else if channel.unread_count > 0 {
                     Style::default()
@@ -288,9 +295,17 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" ○ DISCONNECTED ", Style::default().fg(Color::Red))
     };
     
-    // Get active channel display name
+    // Get active channel display name with icon
     let channel_name = app.channels.get(&app.active_channel)
-        .map(|ch| ch.display_name())
+        .map(|ch| {
+            let display_name = ch.display_name();
+            // Add icon to distinguish channel types
+            match &ch.channel_type {
+                crate::app::ChannelType::Global => format!("# {}", display_name),
+                crate::app::ChannelType::DirectMessage { .. } => format!("@ {}", display_name),
+                crate::app::ChannelType::Group { .. } => format!("⚫ {}", display_name),
+            }
+        })
         .unwrap_or_else(|| "Unknown".to_string());
     
     // Calculate scroll position info
@@ -464,7 +479,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(3),   // Latency
             Constraint::Length(4),   // Performance (FPS + Memory)
             Constraint::Length(7),   // Statistics (expanded)
-            Constraint::Min(3),      // Network activity chart
+            Constraint::Min(8),      // Keyboard shortcuts
             Constraint::Length(3),   // Server time
         ])
         .split(area);
@@ -566,34 +581,51 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         );
     f.render_widget(stats, chunks[3]);
 
-    // Compact network activity chart using Braille sparkline
-    let activity_data: Vec<u64> = app.telemetry.network_activity.clone();
-    let max_activity = *activity_data.iter().max().unwrap_or(&1).max(&1);
+    // Keyboard shortcuts
+    let shortcuts_text = vec![
+        Line::from(vec![
+            Span::styled("Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Switch channels"),
+        ]),
+        Line::from(vec![
+            Span::styled("J/K", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Select user"),
+        ]),
+        Line::from(vec![
+            Span::styled("d", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Open DM"),
+        ]),
+        Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Type message"),
+        ]),
+        Line::from(vec![
+            Span::styled("Esc", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Exit input"),
+        ]),
+        Line::from(vec![
+            Span::styled("j/k", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Scroll (3 lines)"),
+        ]),
+        Line::from(vec![
+            Span::styled("g/G", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Top/Bottom"),
+        ]),
+        Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Quit"),
+        ]),
+    ];
     
-    // Take last 30 data points for sparkline
-    let recent_data: Vec<u64> = activity_data
-        .iter()
-        .rev()
-        .take(30)
-        .rev()
-        .copied()
-        .collect();
-    
-    let sparkline_text = create_sparkline(&recent_data, max_activity);
-    let title = format!(" Activity (max: {}/s) ", max_activity);
-    
-    let activity_chart = Paragraph::new(sparkline_text)
+    let shortcuts = Paragraph::new(shortcuts_text)
         .block(
             Block::default()
-                .title(title)
+                .title(" Shortcuts ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        )
-        .style(Style::default().fg(Color::Green))
-        .alignment(Alignment::Left);
-    
-    f.render_widget(activity_chart, chunks[4]);
+                .border_style(Style::default().fg(Color::Yellow)),
+        );
+    f.render_widget(shortcuts, chunks[4]);
     
     // Server time
     use chrono::Utc;
@@ -771,23 +803,4 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
     }
     
     lines
-}
-
-/// Create a sparkline visualization using Braille characters
-fn create_sparkline(data: &[u64], max_value: u64) -> String {
-    // Braille characters for 9 levels (0-8)
-    const BRAILLE_CHARS: [&str; 9] = [" ", "⡀", "⡄", "⡆", "⡇", "⣇", "⣧", "⣷", "⣿"];
-    
-    if data.is_empty() || max_value == 0 {
-        return " ".repeat(30);
-    }
-    
-    data.iter()
-        .map(|&value| {
-            // Normalize to 0-8 range
-            let normalized = ((value as f64 / max_value as f64) * 8.0).round() as usize;
-            let index = normalized.min(8);
-            BRAILLE_CHARS[index]
-        })
-        .collect()
 }

@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Default server URL (can be overridden via CLI args)
-const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
+const DEFAULT_SERVER_URL: &str = "wss://ghostwire.fly.dev/ws";
 
 /// GhostWire - Ephemeral terminal chat client
 #[derive(Parser)]
@@ -252,11 +252,9 @@ fn handle_key_event(
                 KeyCode::Tab => app.activate_selected_channel(),
                 KeyCode::Char('#') => app.switch_channel("global".to_string()),
                 
-                // Create DM
+                // Create DM with selected user
                 KeyCode::Char('d') => {
-                    // Prompt for username (simple implementation)
                     if !app.users.is_empty() {
-                        // Use selected user
                         if let Some(user) = app.users.get(app.selected_user) {
                             app.open_dm(user.username.clone());
                         }
@@ -420,7 +418,7 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             tracing::debug!("User {} typing status: {} in channel {}", username, is_typing, channel_id);
             app.set_user_typing(&channel_id, &username, is_typing);
         }
-        NetworkEvent::KeyExchangeReceived { username, public_key: _ } => {
+        NetworkEvent::KeyExchangeReceived { username } => {
             tracing::info!("✓ Key exchange complete with {}", username);
             app.add_message(ChatMessage::system_with_severity(
                 format!("🔒 Secure session established with {}", username),

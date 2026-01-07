@@ -73,7 +73,7 @@ impl Default for GhostWireConfig {
 
 // Default value functions for serde
 fn default_server_url() -> String {
-    "wss://ghost.jcyrus.com/ws".to_string()
+    "wss://ghostwire.fly.dev/ws".to_string()
 }
 
 fn default_true() -> bool {
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = GhostWireConfig::default();
-        assert_eq!(config.default_server_url, "wss://ghost.jcyrus.com/ws");
+        assert_eq!(config.default_server_url, "wss://ghostwire.fly.dev/ws");
         assert!(config.auto_reconnect.enabled);
         assert_eq!(config.auto_reconnect.max_attempts, 10);
         assert!(config.send_typing_indicators);

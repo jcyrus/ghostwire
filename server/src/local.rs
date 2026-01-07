@@ -111,8 +111,16 @@ async fn main() {
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         );
 
-    // Bind to address
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    // Get port from environment variable, default to 8080 for local dev
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse::<u16>()
+        .unwrap_or_else(|e| {
+            tracing::error!("Invalid PORT value: {}. Using default 8080", e);
+            8080
+        });
+    
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("👻 GhostWire Relay listening on http://{}", addr);
     info!("📡 WebSocket endpoint: ws://{}/ws", addr);
     info!("🌐 Status page: http://{}", addr);
