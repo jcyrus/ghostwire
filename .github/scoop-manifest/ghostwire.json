@@ -1,0 +1,23 @@
+{
+  "version": "0.3.0",
+  "description": "Secure, ephemeral TUI chat client built with Rust and Ratatui",
+  "homepage": "https://github.com/jcyrus/GhostWire",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/jcyrus/GhostWire/releases/download/v0.3.0/ghostwire-windows-amd64.exe",
+      "hash": "PUT_WINDOWS_SHA256_HERE",
+      "bin": [["ghostwire-windows-amd64.exe", "ghostwire"]]
+    }
+  },
+  "checkver": {
+    "github": "https://github.com/jcyrus/GhostWire"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/jcyrus/GhostWire/releases/download/v$version/ghostwire-windows-amd64.exe"
+      }
+    }
+  }
+}

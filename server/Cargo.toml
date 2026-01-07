@@ -12,9 +12,9 @@ name = "ghostwire-server"
 path = "src/main.rs"
 
 # Local development binary
-# [[bin]]
-# name = "ghostwire-local"
-# path = "src/local.rs"
+[[bin]]
+name = "ghostwire-local"
+path = "src/local.rs"
 
 [dependencies]
 # Workspace dependencies

@@ -36,34 +36,58 @@
 
 ## 💾 Initialize Uplink (Installation)
 
-### ⚡️ Quick Install (The "Hacker" Way)
+### macOS
 
-**Linux / macOS:**
+#### 🍺 Homebrew (Recommended)
+
+```bash
+brew tap jcyrus/tap
+brew install ghostwire
+```
+
+#### ⚡️ Quick Install Script
 
 ```bash
 curl -sL https://ghost.jcyrus.com/install | bash
 ```
 
-**Windows (PowerShell):**
+### Windows
+
+#### 📦 Scoop (Recommended)
+
+```powershell
+scoop bucket add jcyrus https://github.com/jcyrus/scoop-bucket
+scoop install ghostwire
+```
+
+#### ⚡️ Quick Install Script
 
 ```powershell
 irm https://ghost.jcyrus.com/install.ps1 | iex
 ```
 
-> **Note for Windows users:** After installation, you may need to restart your terminal for the PATH changes to take effect. If `ghostwire` is not recognized, run:
+> **Note:** After installation, you may need to restart your terminal for the PATH changes to take effect. If `ghostwire` is not recognized, run:
 >
 > ```powershell
 > $env:Path = [System.Environment]::GetEnvironmentVariable('Path','User')
 > ```
 
+### Linux
+
+#### ⚡️ Quick Install Script
+
+```bash
+curl -sL https://ghost.jcyrus.com/install | bash
+```
+
 ### 📦 Manual Installation
 
-### Prerequisites
+#### Prerequisites
 
 - **Rust Toolchain:** 1.70+ (2021 Edition)
 - **Terminal:** Support for TrueColor (NerdFonts recommended for icons)
 
-### Compile Source
+#### Compile from Source
 
 Clone the repository and build the binary:
 
@@ -78,34 +102,12 @@ cargo build --release -p ghostwire-client
 
 ### 🔄 Updating GhostWire
 
-To update to the latest version, simply re-run the installation command:
-
-**Linux / macOS:**
-
-```bash
-curl -sL https://ghost.jcyrus.com/install | bash
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://ghost.jcyrus.com/install.ps1 | iex
-```
-
-The installer will automatically:
-
-- Download the latest release
-- Replace your existing binary
-- Preserve your installation location
-
-**Manual Update (from source):**
-
-```bash
-cd GhostWire
-git pull origin main
-cargo build --release -p ghostwire-client
-# Binary is at ./target/release/ghostwire
-```
+| Method                   | Update Command                                          |
+| :----------------------- | :------------------------------------------------------ |
+| **Homebrew (macOS)**     | `brew upgrade ghostwire`                                |
+| **Scoop (Windows)**      | `scoop update ghostwire`                                |
+| **Quick Install Script** | Re-run the installation command                         |
+| **Manual (from source)** | `git pull && cargo build --release -p ghostwire-client` |
 
 **Check your current version:**
 
