@@ -87,7 +87,7 @@ if [ "$FOUND" = true ]; then
     echo -e "${GREEN}✅ GhostWire has been uninstalled${NC}"
     echo ""
     echo "To reinstall:"
-    echo "  curl -sL https://ghostwire.fly.dev/install | bash"
+    echo "  curl -sL https://ghost.jcyrus.com/install | bash"
 else
     echo -e "${YELLOW}⚠️  No GhostWire installation found${NC}"
 fi

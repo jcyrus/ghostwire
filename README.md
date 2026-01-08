@@ -2,7 +2,7 @@
 
 ![GhostWire Logo](docs/logo.jpg)
 
-[![Status](https://img.shields.io/website?url=https%3A%2F%2Fghostwire.fly.dev%2Fhealth&label=Relay%20Status&style=for-the-badge&color=success)](https://ghostwire.fly.dev)
+[![Status](https://img.shields.io/website?url=https%3A%2F%2Fghost.jcyrus.com%2Fhealth&label=Relay%20Status&style=for-the-badge&color=success)](https://ghost.jcyrus.com)
 
 **The server knows nothing. The terminal is everything.**
 
@@ -48,7 +48,7 @@ brew install ghostwire
 #### ⚡️ Quick Install Script
 
 ```bash
-curl -sL https://ghostwire.fly.dev/install | bash
+curl -sL https://ghost.jcyrus.com/install | bash
 ```
 
 ### Windows
@@ -63,7 +63,7 @@ scoop install ghostwire
 #### ⚡️ Quick Install Script
 
 ```powershell
-irm https://ghostwire.fly.dev/install.ps1 | iex
+irm https://ghost.jcyrus.com/install.ps1 | iex
 ```
 
 > **Note:** After installation, you may need to restart your terminal for the PATH changes to take effect. If `ghostwire` is not recognized, run:
@@ -77,7 +77,7 @@ irm https://ghostwire.fly.dev/install.ps1 | iex
 #### ⚡️ Quick Install Script
 
 ```bash
-curl -sL https://ghostwire.fly.dev/install | bash
+curl -sL https://ghost.jcyrus.com/install | bash
 ```
 
 ### 📦 Manual Installation
@@ -122,7 +122,7 @@ ghostwire --version  # Coming soon in v0.2.0
 After installation, connect to the public relay:
 
 ```bash
-# Connect with your username (connects to wss://ghostwire.fly.dev/ws by default)
+# Connect with your username (connects to wss://ghost.jcyrus.com/ws by default)
 ghostwire your_username
 
 # Or connect to a custom server

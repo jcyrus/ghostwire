@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Default server URL (can be overridden via CLI args)
-const DEFAULT_SERVER_URL: &str = "wss://ghostwire.fly.dev/ws";
+const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
 
 /// GhostWire - Ephemeral terminal chat client
 #[derive(Parser)]

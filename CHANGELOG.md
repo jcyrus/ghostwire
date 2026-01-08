@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Custom Domain**: Migrated from `ghostwire.fly.dev` to `ghost.jcyrus.com`
+  - Updated default server URL in client code
+  - Updated all documentation and install scripts
+  - Custom domain with TLS certificate via Fly.io
 - **Infrastructure Migration**: Migrated from Shuttle.rs to Fly.io
-  - New production URL: `wss://ghostwire.fly.dev/ws`
+  - Production URL: `wss://ghost.jcyrus.com/ws` (via `ghostwire.fly.dev`)
   - Improved deployment reliability and global availability
   - Docker-based deployment with multi-stage builds
   - Singapore region deployment with auto-scaling disabled for consistent availability
