@@ -4,17 +4,13 @@
 mod relay;
 
 use axum::{
-    extract::{
-        ws::WebSocketUpgrade,
-        State,
-    },
+    extract::{ws::WebSocketUpgrade, State},
     response::{Html, IntoResponse},
     routing::get,
     Router,
 };
 use relay::RelayState;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::info;
 
 /// Health check endpoint
 async fn health_check() -> &'static str {
@@ -24,7 +20,7 @@ async fn health_check() -> &'static str {
 /// Root endpoint with server info
 async fn root(State(state): State<RelayState>) -> Html<String> {
     let client_count = state.client_count().await;
-    
+
     Html(format!(
         r#"
 <!DOCTYPE html>
@@ -76,28 +72,29 @@ async fn root(State(state): State<RelayState>) -> Html<String> {
 }
 
 /// WebSocket upgrade handler
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<RelayState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<RelayState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| relay::handle_websocket(socket, state))
 }
 
 /// Redirect to the install script
 async fn install_redirect() -> impl IntoResponse {
-    axum::response::Redirect::temporary("https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.sh")
+    axum::response::Redirect::temporary(
+        "https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.sh",
+    )
 }
 
 /// Redirect to the PowerShell install script
 async fn install_ps1_redirect() -> impl IntoResponse {
-    axum::response::Redirect::temporary("https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.ps1")
+    axum::response::Redirect::temporary(
+        "https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.ps1",
+    )
 }
 
 /// Main Shuttle entry point
 #[shuttle_runtime::main]
 async fn main() -> shuttle_axum::ShuttleAxum {
     // Shuttle handles tracing initialization, so we don't need to do it here
-    
+
     // Create shared state
     let state = RelayState::new();
 

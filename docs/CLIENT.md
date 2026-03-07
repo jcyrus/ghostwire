@@ -115,6 +115,9 @@ The GhostWire client implements a **critical async/sync split pattern** to ensur
 - WebSocket client using `tokio-tungstenite`
 - Graceful error handling (no `.unwrap()`)
 - Automatic reconnection support (future)
+- DM encryption with per-message ratcheted keys
+- Replay protection via nonce tracking
+- Group sender-key distribution and encrypted `group:*` message handling
 
 **Message Flow:**
 
@@ -230,12 +233,15 @@ All messages use JSON over WebSocket:
 
 ```json
 {
-  "type": "MSG" | "AUTH" | "SYS",
+  "type": "MSG" | "AUTH" | "SYS" | "TYPING" | "KEY_EXCHANGE" | "SENDER_KEY",
   "payload": "message content",
+  "channel": "global",
   "meta": {
     "sender": "username",
     "timestamp": 1234567890
-  }
+  },
+  "recipient": null,
+  "ttl": null
 }
 ```
 
@@ -260,12 +266,48 @@ All messages use JSON over WebSocket:
 {
   "type": "AUTH",
   "payload": "alice",
+  "channel": "global",
   "meta": {
     "sender": "alice",
     "timestamp": 1733234567
   }
 }
 ```
+
+**KEY_EXCHANGE** - Public-key broadcast for E2EE session establishment
+
+```json
+{
+  "type": "KEY_EXCHANGE",
+  "payload": "Base64EncodedX25519PublicKey",
+  "channel": "global",
+  "meta": {
+    "sender": "alice",
+    "timestamp": 1733234567
+  }
+}
+```
+
+**SENDER_KEY** - Group sender-key distribution
+
+```json
+{
+  "type": "SENDER_KEY",
+  "payload": "Base64Encoded64ByteSenderKeyPayload",
+  "channel": "group:ops",
+  "meta": {
+    "sender": "alice",
+    "timestamp": 1733234567
+  }
+}
+```
+
+### Security Commands
+
+- `/verify <username>`: Compute and display a safety number for manual identity verification
+- `/confirm <username>`: Mark a peer as verified in the roster
+- `/expire <seconds> <message>`: Send a self-destructing message with TTL metadata
+- `/groupkey <group> <user1,user2,...>`: Manually distribute a group sender key if needed
 
 **SYS** - System message
 
@@ -342,8 +384,8 @@ Constraint::Percentage(15),
 
 ## 🐛 Known Limitations
 
-1. **No Reconnection:** Client doesn't auto-reconnect on disconnect (future feature)
-2. **No Encryption:** Messages are sent in plaintext (client-side encryption planned)
+1. **Global Channel Is Plaintext:** End-to-end encryption applies to DMs and `group:*` channels, not `global`
+2. **Group Bootstrap Is Minimal:** Group sender keys are auto-bootstrapped on first send, but there is no full group membership workflow yet
 3. **No Persistence:** Message history is lost on restart
 4. **No User Authentication:** Anyone can join with any username
 
@@ -363,7 +405,7 @@ Constraint::Percentage(15),
 
 To complete GhostWire, you need to:
 
-1. **Implement the Server** - Create the relay server in `server/src/`
-2. **Test End-to-End** - Run client + server together
-3. **Add Encryption** - Implement client-side E2E encryption
+1. **Formalize Group UX** - Add named group creation, membership, and invite flows
+2. **Harden Metadata Privacy** - Implement sealed sender and message padding
+3. **Add Persistence Options Carefully** - Optional encrypted local history without breaking the ephemeral default
 4. **Deploy** - Deploy server to Shuttle.rs

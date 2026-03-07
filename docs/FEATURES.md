@@ -1,8 +1,17 @@
-# New Features Implementation
+# Feature Implementation Status
 
 ## Overview
 
-GhostWire has evolved from a basic chat client to a feature-rich terminal communication platform with v0.2.0.
+GhostWire now includes the v0.4.0 security-story work on `main`, in addition to the earlier v0.2.0 and v0.3.0 foundations.
+
+### ✅ v0.4.0 Features (Implemented on `main`)
+
+1. **Safety Number Verification UI** - `/verify` and `/confirm` workflow for manual trust establishment
+2. **Self-Destruct Command** - `/expire <seconds> <message>` with TTL propagation across the wire
+3. **Automatic Key Rotation Trigger** - Periodic checks activate ephemeral key rotation and re-broadcast
+4. **Replay Protection** - Nonce tracking rejects replayed DM ciphertext
+5. **Per-Message Ratchets** - Send/receive chain ratchets derive unique message keys
+6. **Group Message Encryption** - Sender-key distribution and encrypted `group:*` messages
 
 ### ✅ v0.2.0 Features (December 2025)
 
@@ -232,6 +241,38 @@ NetworkCommand::Authenticate { username: new_username } => {
 ---
 
 ## Future-Ready Methods
+
+---
+
+## v0.4.0 Security Story
+
+### Safety Number Verification
+
+- `/verify <username>` computes a deterministic safety number from both peers' public keys
+- `/confirm <username>` marks the peer as trusted
+- Verified peers are shown with a `✓` badge in the user roster
+
+### Self-Destructing Messages
+
+- `/expire <seconds> <message>` sends a message with `ttl` metadata
+- Local and remote clients render the message with a timer marker and clean it up after expiry
+
+### Replay Protection
+
+- Incoming encrypted DM payloads are base64-decoded
+- The nonce prefix is checked against a bounded per-peer history
+- Replays are dropped and logged to `security_audit.log`
+
+### Per-Message Ratchets
+
+- Each DM session now maintains send and receive chains
+- Every encrypted send/receive advances its respective chain and derives a fresh message key
+
+### Group Message Encryption
+
+- `group:*` channels use sender-key encryption
+- Sender keys can be distributed manually with `/groupkey ...`
+- The network layer also auto-bootstraps sender-key distribution on first encrypted group send
 
 The following methods are implemented but marked with `#[allow(dead_code)]` for future features:
 

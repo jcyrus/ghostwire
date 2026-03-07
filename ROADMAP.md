@@ -2,8 +2,8 @@
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 
-**Current Version**: v0.3.0  
-**Last Updated**: 2025-12-09
+**Current Version**: v0.3.0
+**Last Updated**: 2026-03-08
 
 ---
 
@@ -38,15 +38,15 @@
 - [x] **Server Blindness** - Server sees only encrypted blobs ✅
 - [x] **No User Database** - Server stores nothing ✅
 - [x] **Ephemeral Keys** - In-memory only, never persisted ✅
-- [x] **24-Hour Key Rotation** - Automatic rotation (infrastructure ready) ✅
+- [x] **24-Hour Key Rotation** - Infrastructure ready (`needs_rotation()`, `rotate_ephemeral_key()`) — trigger activation in v0.4.0 ⚠️
 
 #### Security Features
 
-- [x] **Self-Destructing Messages** - TTL-based expiry with secure deletion ✅
+- [x] **Self-Destructing Messages** - TTL-based expiry with secure deletion (infrastructure ready, user command in v0.4.0) ⚠️
 - [x] **Secure Deletion** - Memory zeroing with zeroize crate ✅
-- [x] **Audit Logs** - Comprehensive security event logging ✅
+- [x] **Audit Logs** - Comprehensive security event logging (11 event types) ✅
 - [x] **Security Indicators** - 🔒 icon for encrypted messages ✅
-- [x] **Safety Numbers** - SHA-256 fingerprints (computed, UI pending) ✅
+- [x] **Safety Numbers** - SHA-256 fingerprints computed; verification UI in v0.4.0 ⚠️
 
 #### Documentation
 
@@ -59,270 +59,189 @@
 
 ## 🚀 Next Release (v0.4.0)
 
-**Target**: January 2026  
-**Theme**: Enhanced E2EE & Rich Communication
+**Theme**: Complete the Security Story
 
-### Enhanced Encryption
+_Finishes what v0.3.0 started — every feature below has infrastructure already in place._
 
-- [ ] **Double Ratchet Algorithm** - Per-message keys for forward secrecy
-- [ ] **Safety Number Verification UI** - Manual identity verification
-- [ ] **Group Message Encryption** - Sender keys for group E2EE
-- [ ] **Key Rotation Triggers** - Automatic 24h rotation activation
-- [ ] **Replay Protection** - Nonce-based anti-replay
+**Implementation Status**: All scoped features are now implemented on `main` and pending release packaging.
 
-### Messaging Features
+### Complete v0.3.0 Infrastructure
 
-- [ ] **File Sharing** - Send files up to 10MB (encrypted)
-- [ ] **Code Blocks** - Syntax highlighting for code snippets
-- [ ] **Markdown Support** - Rich text formatting
+- [x] **Safety Number Verification UI** - `/verify <username>` displays safety numbers and `/confirm <username>` marks trust
+- [x] **Self-Destruct UI Command** - `/expire <seconds> <message>` sends TTL-tagged messages and pairs with the cleanup loop
+- [x] **Key Rotation Trigger** - Periodic 24h rotation checks now activate `rotate_ephemeral_key()` and re-broadcast fresh keys
+
+### Encryption Hardening
+
+- [x] **Double Ratchet Algorithm** - Per-message forward secrecy via send/receive chain ratchets derived from the HKDF chain key
+- [x] **Replay Protection** - Nonce tracking rejects replayed DM ciphertext and writes audit log events
+- [x] **Group Message Encryption** - Sender-key based group E2EE implemented for `group:*` channels with auto-bootstrap distribution
+
+---
+
+## 💬 Rich Messaging (v0.5.0)
+
+**Theme**: Expressive Terminal Communication
+
+### Message Formatting
+
+- [ ] **Code Blocks** - Syntax-highlighted code snippets in chat
+- [ ] **Markdown Support** - Bold, italic, inline code, block quotes
 - [ ] **Reactions** - Emoji reactions to messages
-- [ ] **Message Editing** - Edit sent messages
-- [ ] **Message Threading** - Reply to specific messages
-- [ ] **Search** - Search message history
+- [ ] **Message Editing** - Edit a sent message within a time window
+- [ ] **Message Threading** - Reply to a specific message (UUIDs already on `ChatMessage`)
 
-### Group Features
+### Discovery & History
 
-- [ ] **Group Channels** - Multi-user group chats
+- [ ] **Search** - Full-text search over local message history
+- [ ] **Pinned Messages** - Pin important messages in a channel
+- [ ] **Jump to Date** - Navigate history by timestamp
+
+---
+
+## 👥 Groups & Presence (v0.6.0)
+
+**Theme**: Multi-User Collaboration
+
+### Group Channels
+
+- [ ] **Named Group Channels** - Multi-user group chats beyond global
 - [ ] **Group Permissions** - Admin, moderator, member roles
-- [ ] **Group Invites** - Invite links for groups
+- [ ] **Group Invites** - Shareable invite links for groups
 
-### Presence & Status
+### Enhanced Presence
 
-- [ ] **Custom Status** - Set custom status messages
-- [ ] **Do Not Disturb** - Mute notifications
-- [ ] **Away Detection** - Auto-set away after inactivity
-- [ ] **Last Seen Privacy** - Control who sees your last seen
-
----
-
-## 🎨 User Experience (v0.5.0)
-
-**Target**: February 2026  
-**Theme**: Customization & Media Support
-
-### Media Features
-
-- [ ] **Image Preview** - Inline image display in terminal
-- [ ] **File Attachments** - Attach documents, images
-- [ ] **Voice Messages** - Send voice recordings
-- [ ] **Video Thumbnails** - Preview video files
-
-### Themes & Customization
-
-- [ ] **Theme System** - Multiple color schemes (cyberpunk, matrix, nord, etc.)
-- [ ] **Custom Themes** - User-defined themes via config
-- [ ] **Layout Options** - Rearrange panels
-- [ ] **Keybinding Customization** - Vim, Emacs, or custom keybindings
+- [ ] **Custom Status** - Set a custom status message
+- [ ] **Do Not Disturb** - Suppress all notifications
+- [ ] **Away Auto-Detection** - Set away status after configurable inactivity period
+- [ ] **Last Seen Privacy** - Control who can see your last-seen timestamp
 
 ---
 
-## 🎨 User Experience (v0.5.0)
+## 🛠️ Developer Experience (v0.7.0)
 
-**Target**: February 2026  
-**Theme**: Customization & Accessibility
-
-### Accessibility
-
-- [ ] **Screen Reader Support** - ARIA labels and announcements
-- [ ] **High Contrast Mode** - For visually impaired users
-- [ ] **Font Scaling** - Adjustable font sizes
-- [ ] **Keyboard Navigation** - Full keyboard accessibility
-- [ ] **Color Blind Modes** - Alternative color schemes
-
-### Notifications
-
-- [ ] **Desktop Notifications** - System notifications for new messages
-- [ ] **Sound Alerts** - Customizable sound effects
-- [ ] **Notification Rules** - Filter notifications by channel/user
-- [ ] **Quiet Hours** - Schedule notification muting
-
-**Target**: March 2026  
-**Theme**: Cross-Platform & Integration
-
-### Platform Support
-
-- [ ] **Mobile App** - iOS and Android apps (React Native or Flutter)
-- [ ] **Web Client** - Browser-based client (WebAssembly)
-- [ ] **Desktop GUI** - Electron or Tauri-based GUI
-- [ ] **Browser Extension** - Quick access from browser
+**Theme**: Extensibility & Customization
 
 ### Integrations
 
-- [ ] **Bot API** - Build bots and integrations
-- [ ] **Webhooks** - Incoming/outgoing webhooks
-- [ ] **Bridge Protocols** - Bridge to Matrix, IRC, Discord
-- [ ] **CLI Tools** - Send messages from command line
-- [ ] **API Client Libraries** - Python, JavaScript, Go libraries
+- [ ] **Bot API** - Build bots and automations via message hooks
+- [ ] **Webhooks** - Outgoing webhooks for external integrations
+- [ ] **CLI Pipe Mode** - `echo "msg" | ghostwire user` for scripting
+- [ ] **Bridge Protocols** - Bridge to Matrix or IRC
+- [ ] **API Client Libraries** - Python and Go library bindings
 
-### Data Portability
+### Customization
 
-- [ ] **Export Messages** - Export chat history
-- [ ] **Import Messages** - Import from other platforms
-- [ ] **Backup/Restore** - Encrypted backups
-- [ ] **Account Migration** - Move between servers
+- [ ] **Theme System** - Built-in color schemes (cyberpunk, matrix, nord, gruvbox)
+- [ ] **Custom Themes** - User-defined themes via `config.toml`
+- [ ] **Keybinding Customization** - Vim, Emacs, or fully custom bindings
+- [ ] **Layout Options** - Rearrange or resize panels
+
+### Accessibility
+
+- [ ] **Screen Reader Support** - Accessible output for screen readers
+- [ ] **High Contrast Mode** - For visually impaired users
+- [ ] **Color Blind Modes** - Alternative color palettes
 
 ---
 
-## 🏗️ Infrastructure (v0.7.0)
+## 🏗️ Infrastructure & Scale (v0.8.0)
 
-**Target**: April 2026  
 **Theme**: Scalability & Reliability
 
 ### Server Improvements
 
-- [ ] **Horizontal Scaling** - Support multiple server instances
-- [ ] **Load Balancing** - Distribute connections across servers
-- [ ] **Redis Integration** - Shared state for multi-server setup
-- [ ] **Database Option** - Optional message persistence (encrypted)
-- [ ] **CDN Support** - Serve static assets from CDN
-
-### Reliability
-
-- [ ] **Health Checks** - Server health monitoring
-- [ ] **Graceful Degradation** - Handle server failures
-- [ ] **Rate Limiting** - Prevent abuse
-- [ ] **DDoS Protection** - Cloudflare or similar
-- [ ] **Monitoring** - Prometheus/Grafana integration
+- [ ] **Horizontal Scaling** - Multiple relay instances with shared state
+- [ ] **Redis Integration** - Pub/sub for multi-server message fanout
+- [ ] **Rate Limiting** - Per-connection message rate limits to prevent abuse
+- [ ] **Graceful Degradation** - Failover handling for server restarts
+- [ ] **Monitoring** - Prometheus metrics + Grafana dashboards
 
 ### Performance
 
-- [ ] **Message Compression** - Reduce bandwidth usage
-- [ ] **Connection Pooling** - Reuse connections
-- [ ] **Lazy Loading** - Load messages on demand
-- [ ] **Caching** - Cache frequently accessed data
-- [ ] **Binary Protocol** - Replace JSON with MessagePack or Protocol Buffers
-
----
-
-## 🎓 Advanced Features (v0.8.0)
-
-**Target**: May 2026  
-**Theme**: Power User Features
-
-### Advanced Messaging
-
-- [ ] **Voice Messages** - Send voice recordings
-- [ ] **Video Calls** - 1-on-1 video calls (WebRTC)
-- [ ] **Screen Sharing** - Share screen in calls
-- [ ] **Polls** - Create polls in channels
-- [ ] **Scheduled Messages** - Send messages at specific times
-
-## 🎓 Advanced Features (v0.8.0)
-
-**Target**: May 2026  
-**Theme**: Power User Features
-
-### Advanced Messaging
-
-- [ ] **Video Calls** - 1-on-1 video calls (WebRTC)
-- [ ] **Screen Sharing** - Share screen in calls
-- [ ] **Polls** - Create polls in channels
-- [ ] **Scheduled Messages** - Send messages at specific times
-
-### Automationta Stripping\*\* - Remove metadata from files
-
----
-
-## 🔐 Enterprise Features (v0.9.0)
-
-**Target**: June 2026  
-**Theme**: Business & Compliance
-
-### Enterprise Security
-
-- [ ] **SSO Integration** - SAML, OAuth, LDAP
-- [ ] **Compliance Logging** - Audit logs for compliance
-- [ ] **Data Retention Policies** - Configurable retention
-- [ ] **eDiscovery** - Search and export for legal
-- [ ] **Encryption Key Management** - Enterprise key management
-
-### Administration
-
-- [ ] **Admin Dashboard** - Web-based admin panel
-- [ ] **User Management** - Bulk user operations
-- [ ] **Analytics** - Usage analytics and reporting
-- [ ] **Backup Management** - Automated backups
-- [ ] **License Management** - Enterprise licensing
+- [ ] **Message Compression** - zstd compression to reduce bandwidth
+- [ ] **Binary Protocol** - Replace JSON with MessagePack for lower overhead
+- [ ] **Connection Pooling** - Reuse connections for multi-server setups
 
 ### Deployment
 
-- [ ] **Docker Support** - Official Docker images
-- [ ] **Kubernetes Helm Charts** - K8s deployment
-- [ ] **Terraform Modules** - Infrastructure as code
-- [ ] **On-Premise Deployment** - Self-hosted option
-- [ ] **Cloud Marketplace** - AWS/GCP/Azure marketplace
+- [ ] **Docker Support** - Official multi-arch Docker images
+- [ ] **Docker Compose** - One-command local stack for self-hosters
+- [ ] **On-Premise Deployment** - Self-hosted guide and hardening checklist
+- [ ] **Kubernetes Helm Chart** - Production-grade K8s deployment
 
 ---
 
-## 🌟 v1.0.0 Release
+## 🔏 Advanced Privacy (v0.9.0)
 
-**Target**: July 2026  
-**Theme**: Production Ready
+**Theme**: Minimize What the Server Knows
 
-### Stability
+_Addresses the known metadata-visibility gap documented in `docs/SECURITY.md`._
 
-- [ ] **Security Audit** - Third-party security audit
-- [ ] **Performance Testing** - Load testing and optimization
-- [ ] **Bug Bounty Program** - Reward security researchers
-- [ ] **Penetration Testing** - Professional pen testing
-- [ ] **Code Review** - Comprehensive code review
+- [ ] **Sealed Sender** - Hide sender identity from the relay (Signal-style `SealedSender`)
+- [ ] **Metadata Minimization** - Reduce server-visible routing metadata
+- [ ] **Message Padding** - Uniform ciphertext sizes to prevent traffic analysis
+- [ ] **Tor Integration** - Optional onion routing for transport-layer anonymity
+- [ ] **Session Resumption** - Reconnect without full key re-exchange
+- [ ] **Multi-Device Identity** - Share identity keypair across multiple terminals
+- [ ] **Offline Message Queuing** - Encrypted store-and-forward for offline recipients
 
-### Documentation
+---
 
-- [ ] **Complete Documentation** - All features documented
-- [ ] **API Documentation** - For developers building on GhostWire
-- [ ] **Video Tutorials** - Getting started videos
-- [ ] **Case Studies** - Real-world usage examples
+## 🌟 v1.0.0 — Production Hardening
 
-### Stability & Security
+**Theme**: Audited, Documented, Production Ready
 
-- [ ] **Third-Party Security Audit** - Professional cryptographic audit
-- [ ] **Penetration Testing** - Offensive security testing
-- [ ] **Bug Bounty Program** - Reward security researchers
-- [ ] **Performance Testing** - Load testing and optimization
-- [ ] **Code Review** - Comprehensive code audit
+### Security
 
-### Documentation
+- [ ] **Third-Party Cryptographic Audit** - Professional review of crypto implementation
+- [ ] **Penetration Testing** - Offensive security engagement
+- [ ] **Bug Bounty Program** - Reward responsible disclosure
+- [ ] **Reproducible Builds** - Verifiable, deterministic binaries
 
-- [ ] **Complete Documentation** - All features documented
-- [ ] **API Documentation** - Complete developer reference
-- [ ] **Video Tutorials** - Getting started videos
-- [ ] **Case Studies** - Real-world usage examples
-- [ ] **Best Practices** - Security and usage guidelines
-- [ ] **Migration Guides** - Upgrade paths for all versions
+### Performance & Stability
 
-- **Decentralized Architecture** - P2P mesh network
-- **Blockchain Integration** - Decentralized identity
-- **AI Features** - Smart replies, translation
-- **Quantum-Resistant Encryption** - Post-quantum cryptography
-- **Federated Network** - Interoperable servers
+- [ ] **Load Testing** - Benchmark relay under concurrent connections
+- [ ] **Fuzzing** - cargo-fuzz on message parsing and crypto paths
+- [ ] **Long-Term Soak Testing** - Multi-day stability runs
 
-### Research Areas
+### Documentation & Community
 
-- **Zero-Knowledge Proofs** - Prove identity without revealing data
-- **Homomorphic Encryption** - Compute on encrypted data
-- **Secure Multi-Party Computation** - Collaborative computation
-- **Differential Privacy** - Privacy-preserving analytics
+- [ ] **Complete Documentation** - All features documented with examples
+- [ ] **API Documentation** - Full developer reference for bot/library authors
+- [ ] **Migration Guides** - Upgrade paths for all prior versions
+- [ ] **Best Practices** - Security hardening guide for self-hosters
+
+### Web Access (WebAssembly)
+
+- [ ] **WASM Web Client** - Browser-based client compiled from the same Rust codebase; no Electron or separate GUI needed
+
+---
+
+## 🔭 Future Exploration (Post-1.0)
+
+_Research-stage ideas aligned with the project's privacy-first identity. No commitments._
+
+- **Noise Protocol Framework** - Replace raw X25519 with the full Noise handshake (used by WireGuard, Signal)
+- **Post-Quantum Cryptography** - Hybrid classical + ML-KEM (Kyber) for quantum resistance
+- **Federated Relay Network** - Interoperable self-hosted relays (Matrix-style)
+- **Zero-Knowledge Identity** - Prove group membership without revealing username
+- **File Sharing** - End-to-end encrypted file transfer (chunked, ephemeral)
+- **Desktop Notifications** - OS-level alerts for mentions (macOS/Linux only, opt-in)
 
 ---
 
 ## 📊 Success Metrics
 
-### User Metrics
-
-- **Active Users**: 10K by v0.5.0, 100K by v1.0.0
-- **Retention**: 60% 7-day retention
-- **Engagement**: 50% daily active users
-
 ### Technical Metrics
 
-- **Uptime**: 99.9% server uptime
-- **Latency**: <100ms message delivery
-- **Security**: Zero data breaches
+- **Uptime**: 99.9% relay uptime
+- **Latency**: <100ms message delivery (P95)
+- **Security**: Zero plaintext stored server-side
 
 ### Community Metrics
 
-- **Contributors**: 50+ contributors
+- **Contributors**: 50+ contributors by v1.0.0
 - **Stars**: 5K+ GitHub stars
 - **Forks**: 500+ forks
 
@@ -343,34 +262,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 - **Priorities may shift** based on user feedback and security concerns
 - **Security features take precedence** over convenience features
-- **Breaking changes** will be clearly communicated
-- **Community input** is valued and encouraged
+- **Breaking changes** will be clearly communicated with migration guides
+- **Anything contradicting the ephemeral/zero-trust model** will not be added to core
 
 ---
 
----
-
-## 🎯 Current Focus
-
-**Active Development**: v0.4.0 (Enhanced E2EE & Rich Communication)
-
-**Priorities**:
-
-1. Double Ratchet for forward secrecy
-2. Safety number verification UI
-3. Group message encryption
-4. File sharing with encryption
-
-**Recent Achievements** (v0.3.0):
-
-- ✅ End-to-end encryption operational
-- ✅ X25519 + ChaCha20-Poly1305 crypto stack
-- ✅ Security audit logging
-- ✅ Self-destructing messages
-- ✅ Comprehensive security documentation
-
----
-
-**Last Updated**: 2025-12-09  
-**Maintained By**: @jcyrus  
+**Last Updated**: 2026-03-08
+**Maintained By**: @jcyrus
 **License**: MIT

@@ -6,9 +6,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph,
-    },
+    widgets::{Block, BorderType, Borders, Gauge, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -40,10 +38,10 @@ fn render_channel_list(f: &mut Frame, app: &App, area: Rect) {
             Constraint::Percentage(40), // Users
         ])
         .split(area);
-    
+
     // Render channels
     render_channels(f, app, chunks[0]);
-    
+
     // Render users
     render_users(f, app, chunks[1]);
 }
@@ -52,21 +50,21 @@ fn render_channel_list(f: &mut Frame, app: &App, area: Rect) {
 fn render_channels(f: &mut Frame, app: &App, area: Rect) {
     // Get sorted channel list
     let channel_ids = app.get_channel_list();
-    
+
     // Create channel list items
     let channels: Vec<ListItem> = channel_ids
         .iter()
         .map(|channel_id| {
             if let Some(channel) = app.channels.get(channel_id) {
                 let display_name = channel.display_name();
-                
+
                 // Add unread count if any
                 let content = if channel.unread_count > 0 {
                     format!("{} ({})", display_name, channel.unread_count)
                 } else {
                     display_name
                 };
-                
+
                 // Highlight active channel
                 let style = if channel_id == &app.active_channel {
                     Style::default()
@@ -80,7 +78,7 @@ fn render_channels(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     Style::default().fg(Color::Green)
                 };
-                
+
                 ListItem::new(content).style(style)
             } else {
                 ListItem::new("???").style(Style::default().fg(Color::Red))
@@ -105,7 +103,7 @@ fn render_channels(f: &mut Frame, app: &App, area: Rect) {
 /// Render users section
 fn render_users(f: &mut Frame, app: &App, area: Rect) {
     use chrono::Utc;
-    
+
     // Create user list items
     let users: Vec<ListItem> = app
         .users
@@ -120,14 +118,14 @@ fn render_users(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 ("●", Color::Green) // Online and active
             };
-            
+
             // Calculate time since last seen for offline/idle users
             let last_seen_text = if !user.is_online {
                 let duration = Utc::now().signed_duration_since(user.last_seen);
                 let mins = duration.num_minutes();
                 let hours = duration.num_hours();
                 let days = duration.num_days();
-                
+
                 if days > 0 {
                     format!(" ({}d)", days)
                 } else if hours > 0 {
@@ -145,9 +143,13 @@ fn render_users(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 String::new()
             };
-            
-            let content = format!("{} {}{}", status_icon, user.username, last_seen_text);
-            
+
+            let verified_badge = if user.verified { " ✓" } else { "" };
+            let content = format!(
+                "{} {}{}{}",
+                status_icon, user.username, verified_badge, last_seen_text
+            );
+
             let style = if i == app.selected_user {
                 Style::default()
                     .fg(Color::Black)
@@ -156,7 +158,7 @@ fn render_users(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default().fg(status_color)
             };
-            
+
             ListItem::new(content).style(style)
         })
         .collect();
@@ -181,9 +183,9 @@ fn render_chat_area(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),      // Chat messages (at least 5 lines)
-            Constraint::Length(3),   // Input box
-            Constraint::Length(1),   // Typing indicator
+            Constraint::Min(5),    // Chat messages (at least 5 lines)
+            Constraint::Length(3), // Input box
+            Constraint::Length(1), // Typing indicator
         ])
         .split(area);
 
@@ -196,85 +198,107 @@ fn render_chat_area(f: &mut Frame, app: &App, area: Rect) {
 fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     // Calculate available width for message content (subtract borders and some padding)
     let available_width = area.width.saturating_sub(4) as usize;
-    
+
     // Get ALL messages from active channel (don't skip/take here - let List handle it)
     let messages: Vec<ListItem> = if let Some(channel) = app.channels.get(&app.active_channel) {
-        channel.messages
+        channel
+            .messages
             .iter()
             .flat_map(|msg| {
                 let timestamp = app.timestamp_format.format(&msg.timestamp);
-                
+
                 if msg.is_system {
                     // System messages with color-coded severity
                     use crate::app::MessageSeverity;
-                    
+
                     let (color, symbol) = match msg.severity {
                         Some(MessageSeverity::Info) => (Color::Cyan, "ℹ"),
                         Some(MessageSeverity::Warning) => (Color::Yellow, "⚠"),
                         Some(MessageSeverity::Error) => (Color::Red, "✖"),
                         None => (Color::Red, "⚠"), // Default fallback
                     };
-                    
+
                     let prefix = format!("[{}] {} ", timestamp, symbol);
                     let prefix_len = prefix.chars().count();
                     let content_width = available_width.saturating_sub(prefix_len);
-                    
+
                     // Wrap system message content
                     let wrapped_lines = wrap_message_content(&msg.content, content_width);
-                    
-                    wrapped_lines.into_iter().enumerate().map(|(i, line)| {
-                        if i == 0 {
-                            // First line with prefix
-                            ListItem::new(Line::from(vec![
-                                Span::styled(prefix.clone(), Style::default().fg(Color::DarkGray)),
-                                Span::styled(line, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-                            ]))
-                        } else {
-                            // Continuation lines with indent
-                            let indent = " ".repeat(prefix_len);
-                            ListItem::new(Line::from(vec![
-                                Span::raw(indent),
-                                Span::styled(line, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-                            ]))
-                        }
-                    }).collect::<Vec<_>>()
+
+                    wrapped_lines
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, line)| {
+                            if i == 0 {
+                                // First line with prefix
+                                ListItem::new(Line::from(vec![
+                                    Span::styled(
+                                        prefix.clone(),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                    Span::styled(
+                                        line,
+                                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                    ),
+                                ]))
+                            } else {
+                                // Continuation lines with indent
+                                let indent = " ".repeat(prefix_len);
+                                ListItem::new(Line::from(vec![
+                                    Span::raw(indent),
+                                    Span::styled(
+                                        line,
+                                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                    ),
+                                ]))
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 } else {
                     // Regular messages
                     let sender_style = if msg.sender == app.username {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     };
-                    
+
                     // Add lock icon for encrypted messages (v0.3.0)
                     let lock_icon = if msg.encrypted { "🔒 " } else { "" };
                     let prefix = format!("[{}] {}{}: ", timestamp, lock_icon, msg.sender);
                     let prefix_len = prefix.chars().count();
                     let content_width = available_width.saturating_sub(prefix_len);
-                    
+
                     // Wrap message content
                     let wrapped_lines = wrap_message_content(&msg.content, content_width);
-                    
-                    wrapped_lines.into_iter().enumerate().map(|(i, line)| {
-                        if i == 0 {
-                            // First line with full prefix
-                            ListItem::new(Line::from(vec![
-                                Span::styled(
-                                    format!("[{}] ", timestamp),
-                                    Style::default().fg(Color::DarkGray),
-                                ),
-                                Span::styled(format!("{}: ", msg.sender), sender_style),
-                                Span::styled(line, Style::default().fg(Color::White)),
-                            ]))
-                        } else {
-                            // Continuation lines with indent
-                            let indent = " ".repeat(prefix_len);
-                            ListItem::new(Line::from(vec![
-                                Span::raw(indent),
-                                Span::styled(line, Style::default().fg(Color::White)),
-                            ]))
-                        }
-                    }).collect::<Vec<_>>()
+
+                    wrapped_lines
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, line)| {
+                            if i == 0 {
+                                // First line with full prefix
+                                ListItem::new(Line::from(vec![
+                                    Span::styled(
+                                        format!("[{}] ", timestamp),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                    Span::styled(format!("{}: ", msg.sender), sender_style),
+                                    Span::styled(line, Style::default().fg(Color::White)),
+                                ]))
+                            } else {
+                                // Continuation lines with indent
+                                let indent = " ".repeat(prefix_len);
+                                ListItem::new(Line::from(vec![
+                                    Span::raw(indent),
+                                    Span::styled(line, Style::default().fg(Color::White)),
+                                ]))
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 }
             })
             .collect()
@@ -287,44 +311,58 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::styled(" ○ DISCONNECTED ", Style::default().fg(Color::Red))
     };
-    
+
     // Get active channel display name
-    let channel_name = app.channels.get(&app.active_channel)
+    let channel_name = app
+        .channels
+        .get(&app.active_channel)
         .map(|ch| ch.display_name())
         .unwrap_or_else(|| "Unknown".to_string());
-    
+
     // Calculate scroll position info
     let total_messages = app.get_total_messages();
+    let encrypted_messages = app.count_encrypted_messages();
     let messages_below = app.get_messages_below();
-    
+
     // Build title with scroll position indicator
     let mut title_spans = vec![
         Span::raw(" "),
-        Span::styled(channel_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            channel_name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
         connection_status,
     ];
-    
+
     // Add scroll position indicator if there are messages
     if total_messages > 0 {
         let position_text = if app.scroll_position == 0 {
-            format!(" [Latest] ")
+            " [Latest] ".to_string()
         } else {
             format!(" [↑{}] ", app.scroll_position)
         };
         title_spans.push(Span::styled(
             position_text,
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        let encryption_text = format!(" [🔒{}] ", encrypted_messages);
+        title_spans.push(Span::styled(
+            encryption_text,
+            Style::default().fg(Color::Yellow),
         ));
     }
-    
+
     let title = Line::from(title_spans);
 
     // Calculate scroll offset: when scroll_position=0, we want to show the bottom
     // The List widget scrolls from top, so we need to calculate the offset
     let total_items = messages.len();
     let visible_lines = area.height.saturating_sub(2) as usize; // Subtract borders
-    
+
     let scroll_offset = if total_items > visible_lines {
         // Calculate how far from the top we should scroll
         // When scroll_position=0 (at bottom), offset should be (total - visible)
@@ -339,14 +377,15 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
 
     // Slice messages to show only the visible window starting from scroll_offset
     let visible_messages: Vec<ListItem> = if total_items > visible_lines {
-        messages.into_iter()
+        messages
+            .into_iter()
             .skip(scroll_offset)
             .take(visible_lines)
             .collect()
     } else {
         messages
     };
-    
+
     let messages_list = List::new(visible_messages)
         .block(
             Block::default()
@@ -358,22 +397,24 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(Color::Green));
 
     f.render_widget(messages_list, area);
-    
+
     // Render scroll bar if there are enough items to scroll
     if total_items > visible_lines {
         render_scroll_bar(f, area, app.scroll_position, total_items, visible_lines);
     }
-    
+
     // Show "more messages below" indicator if not at bottom
     if messages_below > 0 {
         let indicator_text = format!(" ↓ {} more ", messages_below);
         let indicator = Paragraph::new(indicator_text)
-            .style(Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(ratatui::layout::Alignment::Center);
-        
+
         // Position at bottom of messages area (just above border)
         let indicator_area = ratatui::layout::Rect {
             x: area.x + area.width / 4,
@@ -381,7 +422,7 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
             width: area.width / 2,
             height: 1,
         };
-        
+
         f.render_widget(indicator, indicator_area);
     }
 }
@@ -427,7 +468,7 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
             .map(|p| p + 1)
             .unwrap_or(0);
         let col_in_line = app.input_cursor.saturating_sub(current_line_start);
-        
+
         f.set_cursor(
             area.x + (col_in_line % available_width) as u16 + 1,
             area.y + (lines_before + col_in_line / available_width) as u16 + 1,
@@ -444,12 +485,19 @@ fn render_typing_indicator(f: &mut Frame, app: &App, area: Rect) {
         } else if typing_users.len() == 2 {
             format!("{} and {} are typing...", typing_users[0], typing_users[1])
         } else {
-            format!("{} and {} others are typing...", typing_users[0], typing_users.len() - 1)
+            format!(
+                "{} and {} others are typing...",
+                typing_users[0],
+                typing_users.len() - 1
+            )
         };
-        
-        let typing_indicator = Paragraph::new(typing_text)
-            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC));
-        
+
+        let typing_indicator = Paragraph::new(typing_text).style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        );
+
         f.render_widget(typing_indicator, area);
     }
 }
@@ -460,12 +508,12 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),   // Connection uptime
-            Constraint::Length(3),   // Latency
-            Constraint::Length(4),   // Performance (FPS + Memory)
-            Constraint::Length(7),   // Statistics (expanded)
-            Constraint::Min(3),      // Network activity chart
-            Constraint::Length(3),   // Server time
+            Constraint::Length(3), // Connection uptime
+            Constraint::Length(3), // Latency
+            Constraint::Length(4), // Performance (FPS + Memory)
+            Constraint::Length(7), // Statistics (expanded)
+            Constraint::Min(3),    // Network activity chart
+            Constraint::Length(3), // Server time
         ])
         .split(area);
 
@@ -473,7 +521,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     let uptime_hours = app.telemetry.connection_uptime / 3600;
     let uptime_mins = (app.telemetry.connection_uptime % 3600) / 60;
     let uptime_secs = app.telemetry.connection_uptime % 60;
-    
+
     let uptime = Paragraph::new(format!(
         "{}h {}m {}s",
         uptime_hours, uptime_mins, uptime_secs
@@ -520,13 +568,9 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Color::Red
     };
-    
-    let performance_text = format!(
-        "FPS: {:.1}\nMem: {:.1} MB",
-        app.telemetry.fps,
-        memory_mb
-    );
-    
+
+    let performance_text = format!("FPS: {:.1}\nMem: {:.1} MB", app.telemetry.fps, memory_mb);
+
     let performance = Paragraph::new(performance_text)
         .style(Style::default().fg(fps_color))
         .alignment(Alignment::Center)
@@ -540,10 +584,12 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(performance, chunks[2]);
 
     // Expanded statistics
-    let active_channel_name = app.channels.get(&app.active_channel)
+    let active_channel_name = app
+        .channels
+        .get(&app.active_channel)
         .map(|ch| ch.display_name())
         .unwrap_or_else(|| "Unknown".to_string());
-    
+
     let stats_text = format!(
         "↑ Sent: {}\n↓ Recv: {}\n📊 Bytes: {} / {}\n📺 Channel: {}\n👥 Users: {} | Channels: {}",
         app.telemetry.messages_sent,
@@ -554,7 +600,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         app.users.len(),
         app.channels.len(),
     );
-    
+
     let stats = Paragraph::new(stats_text)
         .style(Style::default().fg(Color::Green))
         .block(
@@ -569,19 +615,13 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     // Compact network activity chart using Braille sparkline
     let activity_data: Vec<u64> = app.telemetry.network_activity.clone();
     let max_activity = *activity_data.iter().max().unwrap_or(&1).max(&1);
-    
+
     // Take last 30 data points for sparkline
-    let recent_data: Vec<u64> = activity_data
-        .iter()
-        .rev()
-        .take(30)
-        .rev()
-        .copied()
-        .collect();
-    
+    let recent_data: Vec<u64> = activity_data.iter().rev().take(30).rev().copied().collect();
+
     let sparkline_text = create_sparkline(&recent_data, max_activity);
     let title = format!(" Activity (max: {}/s) ", max_activity);
-    
+
     let activity_chart = Paragraph::new(sparkline_text)
         .block(
             Block::default()
@@ -592,16 +632,20 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         )
         .style(Style::default().fg(Color::Green))
         .alignment(Alignment::Left);
-    
+
     f.render_widget(activity_chart, chunks[4]);
-    
+
     // Server time
     use chrono::Utc;
     let now = Utc::now();
     let time_str = now.format("%H:%M:%S UTC").to_string();
-    
+
     let time_widget = Paragraph::new(time_str)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(
             Block::default()
@@ -614,16 +658,22 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render a vertical scroll bar indicator
-fn render_scroll_bar(f: &mut Frame, area: Rect, scroll_position: usize, total_items: usize, visible_items: usize) {
+fn render_scroll_bar(
+    f: &mut Frame,
+    area: Rect,
+    scroll_position: usize,
+    total_items: usize,
+    visible_items: usize,
+) {
     if total_items == 0 || visible_items >= total_items {
         return; // No need for scroll bar
     }
-    
+
     let bar_height = area.height.saturating_sub(2) as usize; // Subtract borders
     if bar_height == 0 {
         return;
     }
-    
+
     // Calculate scroll bar position
     let scroll_percentage = if total_items > visible_items {
         let max_scroll = total_items.saturating_sub(visible_items);
@@ -632,27 +682,23 @@ fn render_scroll_bar(f: &mut Frame, area: Rect, scroll_position: usize, total_it
     } else {
         1.0
     };
-    
+
     let bar_position = ((bar_height as f32) * scroll_percentage) as usize;
     let bar_position = bar_position.min(bar_height.saturating_sub(1));
-    
+
     // Render the scroll bar at the right edge of the area
     let scroll_bar_x = area.x + area.width - 2;
-    
+
     for i in 0..bar_height {
         let y = area.y + 1 + i as u16;
-        let symbol = if i == bar_position {
-            "█"
-        } else {
-            "│"
-        };
-        
+        let symbol = if i == bar_position { "█" } else { "│" };
+
         let style = if i == bar_position {
             Style::default().fg(Color::Yellow)
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        
+
         f.render_widget(
             Paragraph::new(symbol).style(style),
             Rect {
@@ -660,7 +706,7 @@ fn render_scroll_bar(f: &mut Frame, area: Rect, scroll_position: usize, total_it
                 y,
                 width: 1,
                 height: 1,
-            }
+            },
         );
     }
 }
@@ -687,13 +733,13 @@ fn wrap_text(text: &str, max_width: usize) -> String {
     if max_width == 0 {
         return text.to_string();
     }
-    
+
     let mut result = String::new();
     let mut current_line_len = 0;
-    
+
     for word in text.split_whitespace() {
         let word_len = word.chars().count();
-        
+
         if current_line_len == 0 {
             // First word on the line
             result.push_str(word);
@@ -710,7 +756,7 @@ fn wrap_text(text: &str, max_width: usize) -> String {
             current_line_len = word_len;
         }
     }
-    
+
     result
 }
 
@@ -719,14 +765,14 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
     }
-    
+
     let mut lines = Vec::new();
     let mut current_line = String::new();
     let mut current_len = 0;
-    
+
     for word in text.split_whitespace() {
         let word_len = word.chars().count();
-        
+
         // If word itself is longer than max_width, break it up
         if word_len > max_width {
             if !current_line.is_empty() {
@@ -734,7 +780,7 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
                 current_line = String::new();
                 current_len = 0;
             }
-            
+
             // Break long word into chunks
             let chars: Vec<char> = word.chars().collect();
             for chunk in chars.chunks(max_width) {
@@ -742,7 +788,7 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
             }
             continue;
         }
-        
+
         if current_len == 0 {
             // First word on the line
             current_line.push_str(word);
@@ -759,17 +805,17 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
             current_len = word_len;
         }
     }
-    
+
     // Don't forget the last line
     if !current_line.is_empty() {
         lines.push(current_line);
     }
-    
+
     // Return at least one line even if empty
     if lines.is_empty() {
         lines.push(String::new());
     }
-    
+
     lines
 }
 
@@ -777,11 +823,11 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
 fn create_sparkline(data: &[u64], max_value: u64) -> String {
     // Braille characters for 9 levels (0-8)
     const BRAILLE_CHARS: [&str; 9] = [" ", "⡀", "⡄", "⡆", "⡇", "⣇", "⣧", "⣷", "⣿"];
-    
+
     if data.is_empty() || max_value == 0 {
         return " ".repeat(30);
     }
-    
+
     data.iter()
         .map(|&value| {
             // Normalize to 0-8 range
