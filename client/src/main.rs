@@ -591,19 +591,19 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             if already_verified {
                 app.add_message(ChatMessage::system_with_severity(
                     format!(
-                        "✅ {} is already verified. Safety number: {}",
+                        "✅ {} is already verified. Session fingerprint: {}",
                         username, safety_number
                     ),
                     app::MessageSeverity::Info,
                 ));
             } else {
                 app.add_message(ChatMessage::system_with_severity(
-                    format!("🔐 Safety number for {}: {}", username, safety_number),
+                    format!("🔐 Session fingerprint for {}: {}", username, safety_number),
                     app::MessageSeverity::Warning,
                 ));
                 app.add_message(ChatMessage::system_with_severity(
                     format!(
-                        "Compare this with {} out-of-band. Type /confirm {} to trust.",
+                        "Compare this with {} out-of-band. Type /confirm {} to trust this session.",
                         username, username
                     ),
                     app::MessageSeverity::Warning,

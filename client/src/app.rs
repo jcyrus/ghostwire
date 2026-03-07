@@ -4,6 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum number of messages to keep in memory
 const MAX_MESSAGES: usize = 1000;
@@ -266,7 +267,6 @@ impl Channel {
         }
     }
 
-    /// Create a new group channel
     /// Create a group channel (reserved for future use)
     #[allow(dead_code)]
     pub fn group(name: String, members: Vec<String>) -> Self {
@@ -743,11 +743,9 @@ impl App {
         self.telemetry.network_activity.rotate_left(1);
         if let Some(last) = self.telemetry.network_activity.last_mut() {
             // Store the delta (messages in last second)
-            static mut LAST_TOTAL: u64 = 0;
-            unsafe {
-                *last = current_total.saturating_sub(LAST_TOTAL);
-                LAST_TOTAL = current_total;
-            }
+            static LAST_TOTAL: AtomicU64 = AtomicU64::new(0);
+            let prev = LAST_TOTAL.swap(current_total, Ordering::Relaxed);
+            *last = current_total.saturating_sub(prev);
         }
     }
 

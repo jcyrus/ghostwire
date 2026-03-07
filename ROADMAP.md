@@ -44,7 +44,7 @@
 
 - [x] **Self-Destructing Messages** - TTL-based expiry with secure deletion (infrastructure ready, user command in v0.4.0) ⚠️
 - [x] **Secure Deletion** - Memory zeroing with zeroize crate ✅
-- [x] **Audit Logs** - Comprehensive security event logging (11 event types) ✅
+- [x] **Audit Logs** - Comprehensive security event logging (9 event types) ✅
 - [x] **Security Indicators** - 🔒 icon for encrypted messages ✅
 - [x] **Safety Numbers** - SHA-256 fingerprints computed; verification UI in v0.4.0 ⚠️
 
@@ -75,7 +75,7 @@ _Finishes what v0.3.0 started — every feature below has infrastructure already
 
 - [x] **Double Ratchet Algorithm** - Per-message forward secrecy via send/receive chain ratchets derived from the HKDF chain key
 - [x] **Replay Protection** - Nonce tracking rejects replayed DM ciphertext and writes audit log events
-- [x] **Group Message Encryption** - Sender-key based group E2EE implemented for `group:*` channels with auto-bootstrap distribution
+- [x] **Group Message Encryption** - Sender-key-based group E2EE implemented for `group:*` channels with auto-bootstrap distribution
 
 ---
 

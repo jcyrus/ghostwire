@@ -9,7 +9,6 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 ///
 /// Logs are written to:
 /// - ~/.config/ghostwire/logs/ghostwire.log (rotating daily)
-/// - stderr (for errors and warnings)
 ///
 /// Log level can be controlled via RUST_LOG environment variable:
 /// - RUST_LOG=debug ghostwire
@@ -41,7 +40,7 @@ pub fn init_logging() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(env_filter)
         .with(file_layer)
-        .init();
+        .try_init()?;
 
     tracing::info!("GhostWire client logging initialized");
     tracing::info!("Logs directory: {}", log_dir.display());

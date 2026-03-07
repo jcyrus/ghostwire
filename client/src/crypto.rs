@@ -179,7 +179,7 @@ pub fn compute_safety_number(our_identity: &VerifyingKey, their_identity: &Verif
     hasher.update(their_identity.as_bytes());
     let hash = hasher.finalize();
 
-    // Take first 60 bits (15 hex chars) for display
+    // Take first 64 bits (16 hex chars) for display
     hex::encode(&hash[..8])
 }
 

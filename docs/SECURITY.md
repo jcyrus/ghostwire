@@ -214,7 +214,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ✅ **Group Message Encryption**
 
-- Sender-key based E2EE for `group:*` channels is implemented on `main`
+- Sender-key-based E2EE for `group:*` channels is implemented on `main`
 - Global broadcast remains plaintext by design
 
 ---
@@ -468,12 +468,12 @@ We follow **responsible disclosure**:
 
 ### v0.4.0 - Complete the Security Story
 
-- [ ] Safety number verification UI
-- [ ] Self-destruct UI command (`/expire <seconds>`)
-- [ ] Key rotation trigger activation
-- [ ] Per-message keys (Double Ratchet)
-- [ ] Replay protection (nonce tracking)
-- [ ] Group message encryption (sender keys)
+- [x] Safety number verification UI
+- [x] Self-destruct UI command (`/expire <seconds>`)
+- [x] Key rotation trigger activation
+- [x] Per-message keys (Double Ratchet)
+- [x] Replay protection (nonce tracking)
+- [x] Group message encryption (sender keys)
 
 ### v0.9.0 - Advanced Privacy
 

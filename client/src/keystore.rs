@@ -5,7 +5,6 @@ use crate::crypto::{
     compute_safety_number, decode_public_key, decode_verifying_key, derive_session_keys,
     encode_public_key, encode_verifying_key, generate_ephemeral_keypair, generate_identity_keypair,
     ratchet_chain_key, sign_message, verify_signature, EphemeralKeypair, IdentityKeypair,
-    SessionKeys,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -28,7 +27,6 @@ const MAX_NONCE_HISTORY: usize = 10_000;
 
 pub struct PeerSession {
     pub their_public_key: PublicKey,
-    pub session_keys: SessionKeys,
     pub created_at: DateTime<Utc>,
     pub last_message_at: DateTime<Utc>,
     pub verified: bool,
@@ -47,20 +45,30 @@ pub struct PeerSession {
 }
 
 impl PeerSession {
-    /// Advance the send chain and return a per-message encryption key.
-    pub fn ratchet_send(&mut self) -> [u8; 32] {
-        let (new_chain, msg_key) = ratchet_chain_key(&self.send_chain);
-        self.send_chain = new_chain;
-        self.send_counter += 1;
+    /// Derive the next send message key without mutating state.
+    pub fn derive_send_key(&self) -> [u8; 32] {
+        let (_, msg_key) = ratchet_chain_key(&self.send_chain);
         msg_key
     }
 
-    /// Advance the receive chain and return a per-message decryption key.
-    pub fn ratchet_recv(&mut self) -> [u8; 32] {
-        let (new_chain, msg_key) = ratchet_chain_key(&self.recv_chain);
+    /// Commit one step on the send chain after a successful encrypted send.
+    pub fn commit_send(&mut self) {
+        let (new_chain, _) = ratchet_chain_key(&self.send_chain);
+        self.send_chain = new_chain;
+        self.send_counter += 1;
+    }
+
+    /// Derive the next receive message key without mutating state.
+    pub fn derive_recv_key(&self) -> [u8; 32] {
+        let (_, msg_key) = ratchet_chain_key(&self.recv_chain);
+        msg_key
+    }
+
+    /// Commit one step on the receive chain after a successful decrypt.
+    pub fn commit_recv(&mut self) {
+        let (new_chain, _) = ratchet_chain_key(&self.recv_chain);
         self.recv_chain = new_chain;
         self.recv_counter += 1;
-        msg_key
     }
 
     /// Check if a nonce has been seen before. Returns true if replay detected.
@@ -115,12 +123,17 @@ impl SenderKeyState {
         }
     }
 
-    /// Ratchet forward and return a per-message encryption key.
-    pub fn ratchet(&mut self) -> [u8; 32] {
-        let (new_chain, msg_key) = ratchet_chain_key(&self.chain_key);
+    /// Derive the next per-message key without mutating state.
+    pub fn derive_message_key(&self) -> [u8; 32] {
+        let (_, msg_key) = ratchet_chain_key(&self.chain_key);
+        msg_key
+    }
+
+    /// Commit one ratchet step after successful encrypt/decrypt.
+    pub fn commit(&mut self) {
+        let (new_chain, _) = ratchet_chain_key(&self.chain_key);
         self.chain_key = new_chain;
         self.counter += 1;
-        msg_key
     }
 }
 
@@ -243,7 +256,6 @@ impl KeyStore {
         let now = Utc::now();
         let session = PeerSession {
             their_public_key: *their_public,
-            session_keys,
             created_at: now,
             last_message_at: now,
             verified: false,
@@ -254,9 +266,6 @@ impl KeyStore {
             seen_nonces: HashSet::new(),
             nonce_order: VecDeque::new(),
         };
-
-        // Access session key material here so this field remains intentionally live.
-        let _chain_seed = session.session_keys.chain_key;
 
         self.sessions.insert(username.to_string(), session);
         self.pending_exchanges.remove(username);
@@ -341,11 +350,26 @@ impl KeyStore {
         (state.key, state.chain_key)
     }
 
-    /// Ratchet our sender key for a group and return a per-message encryption key.
-    pub fn ratchet_group_send(&mut self, group_id: &str) -> Option<[u8; 32]> {
+    /// Check if we have our own sender key for this group.
+    pub fn has_our_sender_key(&self, group_id: &str) -> bool {
+        self.our_sender_keys.contains_key(group_id)
+    }
+
+    /// Derive the next group-send key without mutating state.
+    pub fn derive_group_send_key(&self, group_id: &str) -> Option<[u8; 32]> {
         self.our_sender_keys
-            .get_mut(group_id)
-            .map(|state| state.ratchet())
+            .get(group_id)
+            .map(|state| state.derive_message_key())
+    }
+
+    /// Commit one step on the group-send chain.
+    pub fn commit_group_send(&mut self, group_id: &str) -> bool {
+        if let Some(state) = self.our_sender_keys.get_mut(group_id) {
+            state.commit();
+            true
+        } else {
+            false
+        }
     }
 
     /// Store a sender key received from another group member.
@@ -366,12 +390,23 @@ impl KeyStore {
         );
     }
 
-    /// Ratchet a peer's sender key for a group and return a per-message decryption key.
-    pub fn ratchet_group_recv(&mut self, group_id: &str, sender: &str) -> Option<[u8; 32]> {
+    /// Derive the next group-receive key without mutating state.
+    pub fn derive_group_recv_key(&self, group_id: &str, sender: &str) -> Option<[u8; 32]> {
+        self.group_sender_keys
+            .get(group_id)
+            .and_then(|group| group.get(sender))
+            .map(|state| state.derive_message_key())
+    }
+
+    /// Commit one step on the group-receive chain.
+    pub fn commit_group_recv(&mut self, group_id: &str, sender: &str) -> bool {
         self.group_sender_keys
             .get_mut(group_id)
             .and_then(|group| group.get_mut(sender))
-            .map(|state| state.ratchet())
+            .map(|state| {
+                state.commit();
+            })
+            .is_some()
     }
 
     /// Check if we have a sender key from a specific member in a group.
@@ -432,13 +467,13 @@ mod tests {
         assert!(alice_store.has_session("bob"));
         assert!(bob_store.has_session("alice"));
 
-        // Keys should match
+        // First derived send/recv keys should match across peers.
         let alice_session = alice_store.get_session("bob").unwrap();
         let bob_session = bob_store.get_session("alice").unwrap();
 
         assert_eq!(
-            alice_session.session_keys.encryption_key,
-            bob_session.session_keys.encryption_key
+            alice_session.derive_send_key(),
+            bob_session.derive_recv_key()
         );
     }
 
@@ -461,13 +496,20 @@ mod tests {
         let alice_session = alice_store.get_session("bob").unwrap();
         let bob_session = bob_store.get_session("alice").unwrap();
 
-        let alice_send_1 = alice_session.ratchet_send();
-        let alice_send_2 = alice_session.ratchet_send();
-        let bob_recv_1 = bob_session.ratchet_recv();
-        let bob_recv_2 = bob_session.ratchet_recv();
+        let alice_send_1 = alice_session.derive_send_key();
+        alice_session.commit_send();
+        let alice_send_2 = alice_session.derive_send_key();
+        alice_session.commit_send();
+
+        let bob_recv_1 = bob_session.derive_recv_key();
+        bob_session.commit_recv();
+        let bob_recv_2 = bob_session.derive_recv_key();
+        bob_session.commit_recv();
 
         assert_eq!(alice_session.send_counter, 2);
         assert_eq!(bob_session.recv_counter, 2);
+        assert_eq!(alice_send_1, bob_recv_1);
+        assert_eq!(alice_send_2, bob_recv_2);
         assert_ne!(alice_send_1, alice_send_2);
         assert_ne!(bob_recv_1, bob_recv_2);
     }
