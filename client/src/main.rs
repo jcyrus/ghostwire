@@ -496,19 +496,11 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             // Convert Unix timestamp to DateTime
             let datetime = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now);
 
-            // Create message with actual timestamp, encryption status, and optional TTL
-            let mut msg = if let Some(ttl_secs) = ttl {
-                ChatMessage::with_expiry(
-                    sender.clone(),
-                    format!("⏱ {}", content),
-                    encrypted,
-                    ttl_secs,
-                )
-            } else {
-                ChatMessage::with_encryption(sender.clone(), content, encrypted)
-            };
+            // Create message with actual timestamp/encryption, then apply TTL metadata if present.
+            let mut msg = ChatMessage::with_encryption(sender.clone(), content, encrypted);
             msg.timestamp = datetime;
             if let Some(ttl_secs) = ttl {
+                msg.content = format!("⏱ {}", msg.content);
                 msg.expires_at = Some(datetime + chrono::Duration::seconds(ttl_secs));
             }
 

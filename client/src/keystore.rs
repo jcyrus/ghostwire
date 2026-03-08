@@ -216,6 +216,11 @@ impl KeyStore {
 
         // Clear all sessions - they need to re-establish with new key
         self.clear_all_sessions();
+
+        // Clear group sender-key state so peers can safely re-distribute
+        // after pairwise sessions are re-established.
+        self.our_sender_keys.clear();
+        self.group_sender_keys.clear();
     }
 
     /// Store a peer's public key from key exchange message
@@ -459,6 +464,24 @@ mod tests {
         let new_key = store.get_our_public_key();
 
         assert_ne!(old_key, new_key);
+    }
+
+    #[test]
+    fn test_key_rotation_clears_group_sender_state() {
+        let mut store = KeyStore::new();
+        let group_id = "group:ops";
+        let sender = "alice";
+
+        let _ = store.get_or_create_sender_key(group_id);
+        assert!(store.derive_group_send_key(group_id).is_some());
+
+        store.store_sender_key(group_id, sender, [1u8; 32], [2u8; 32]);
+        assert!(store.has_sender_key(group_id, sender));
+
+        store.rotate_ephemeral_key();
+
+        assert!(store.derive_group_send_key(group_id).is_none());
+        assert!(!store.has_sender_key(group_id, sender));
     }
 
     #[test]

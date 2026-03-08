@@ -625,27 +625,6 @@ pub async fn network_task(
                                     let _ = write.send(Message::Text(json)).await;
                                 }
 
-                                // Proactively re-initiate pairwise session bootstrap for known peers.
-                                for peer in peers_to_rebootstrap {
-                                    let dm_key_exchange = WireMessage {
-                                        msg_type: MessageType::KeyExchange,
-                                        payload: public_key.clone(),
-                                        channel: "global".to_string(),
-                                        meta: MessageMeta {
-                                            sender: username.clone(),
-                                            timestamp: chrono::Utc::now().timestamp(),
-                                        },
-                                        is_typing: false,
-                                        encrypted: false,
-                                        recipient: Some(peer),
-                                        ttl: None,
-                                    };
-
-                                    if let Ok(json) = serde_json::to_string(&dm_key_exchange) {
-                                        let _ = write.send(Message::Text(json)).await;
-                                    }
-                                }
-
                                 let _ = event_tx.send(NetworkEvent::KeyRotated);
                                 let _ = event_tx.send(NetworkEvent::SystemMessage {
                                     content: "Encrypted conversations were reset after key rotation; sessions are re-establishing.".to_string(),
@@ -931,6 +910,13 @@ fn handle_wire_message(
             });
         }
         MessageType::KeyExchange => {
+            // If a key exchange is targeted, only the intended recipient should process it.
+            if let Some(recipient) = &msg.recipient {
+                if recipient != local_username {
+                    return;
+                }
+            }
+
             // Store peer's public key and establish session
             let their_username = msg.meta.sender.clone();
             let their_public_key = msg.payload.clone();
