@@ -17,7 +17,8 @@ A comprehensive guide to using the GhostWire encrypted chat client.
 7. [Identity & Verification](#7-identity--verification)
 8. [Configuration](#8-configuration)
 9. [Focus Mode](#9-focus-mode)
-10. [Troubleshooting](#10-troubleshooting)
+10. [Fonts & Terminal Recommendations](#10-fonts--terminal-recommendations)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -408,7 +409,54 @@ This is useful for maximizing chat space on smaller terminals.
 
 ---
 
-## 10. Troubleshooting
+## 10. Fonts & Terminal Recommendations
+
+GhostWire uses emoji throughout the UI — reactions (`👍 🎉 ❤️`), status icons, telemetry indicators, and more. To get proper rendering, your terminal and font need full Unicode and emoji support.
+
+### Recommended Fonts
+
+Use a font with built-in emoji glyphs or a [Nerd Font](https://www.nerdfonts.com/) patched variant. These render emoji at the correct width and avoid tofu (□) or broken spacing.
+
+| Font                          | Notes                                                            |
+| ----------------------------- | ---------------------------------------------------------------- |
+| **JetBrains Mono NL**         | Excellent emoji coverage; popular with developers                |
+| **Fira Code** (Nerd Font)     | Ligatures + full Unicode; use the `FiraCode Nerd Font` variant   |
+| **Cascadia Code** (Nerd Font) | Ships with Windows Terminal; Nerd Font variant adds extra glyphs |
+| **Hack Nerd Font**            | Clean monospace with strong Unicode coverage                     |
+| **MesloLGS NF**               | Recommended by many terminal setups (e.g., Powerlevel10k)        |
+
+> **Tip:** If emoji appear as boxes (□) or question marks (?), switch to a Nerd Font variant of your preferred font. Most can be installed from https://www.nerdfonts.com/font-downloads.
+
+### Recommended Terminals
+
+Not all terminal emulators render emoji equally well. The following are tested and known to work with GhostWire:
+
+| Platform           | Terminal                                    | Notes                                                                                   |
+| ------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **macOS**          | [iTerm2](https://iterm2.com/)               | Best-in-class emoji rendering; set font to a Nerd Font in Preferences → Profiles → Text |
+| **macOS**          | [Ghostty](https://ghostty.org/)             | Fast GPU-accelerated terminal with native emoji support                                 |
+| **macOS**          | [Kitty](https://sw.kovidgoyal.net/kitty/)   | Renders emoji natively using system fonts; very fast                                    |
+| **macOS**          | Terminal.app                                | Works with recent macOS versions; emoji support is adequate                             |
+| **Linux**          | [Kitty](https://sw.kovidgoyal.net/kitty/)   | Preferred on Linux; renders emoji without extra configuration                           |
+| **Linux**          | [Alacritty](https://alacritty.org/)         | Fast GPU terminal; pair with a Nerd Font for emoji                                      |
+| **Linux**          | [WezTerm](https://wezfurlong.org/wezterm/)  | Built-in font fallback handles emoji well out of the box                                |
+| **Linux**          | [foot](https://codeberg.org/dnkl/foot)      | Lightweight Wayland terminal with good Unicode support                                  |
+| **Windows**        | [Windows Terminal](https://aka.ms/terminal) | Ships with Cascadia Code; best option on Windows                                        |
+| **Windows**        | [WezTerm](https://wezfurlong.org/wezterm/)  | Cross-platform; works well on Windows with Nerd Fonts                                   |
+| **Cross-platform** | [Warp](https://www.warp.dev/)               | Modern terminal with native emoji rendering                                             |
+
+### Quick Setup Checklist
+
+1. **Install a Nerd Font** — download from [nerdfonts.com](https://www.nerdfonts.com/font-downloads) and install system-wide
+2. **Set it in your terminal** — change the font in your terminal's preferences to the Nerd Font variant (e.g., `JetBrainsMono Nerd Font`)
+3. **Verify** — run `echo "👍 🎉 ❤️ 🔒 ℹ ⚠ ✖"` in your terminal; all characters should render as distinct glyphs without overlap
+4. **Launch GhostWire** — reactions and status icons should now display correctly
+
+> **Note:** If you use `tmux` or `screen`, make sure your multiplexer also supports UTF-8. For tmux, add `set -g default-terminal "tmux-256color"` and `set -gq allow-passthrough on` to your `~/.tmux.conf`.
+
+---
+
+## 11. Troubleshooting
 
 ### Connection Issues
 

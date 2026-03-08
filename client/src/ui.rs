@@ -698,7 +698,7 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
     };
 
     // Wrap text if it's too long
-    let available_width = area.width.saturating_sub(4) as usize; // Subtract borders and padding
+    let available_width = area.width.saturating_sub(4).max(1) as usize; // Subtract borders and padding
     let input_text = wrap_text(&app.input, available_width);
 
     let input = Paragraph::new(input_text)
@@ -716,16 +716,24 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
 
     // Show cursor in edit mode
     if app.input_mode == InputMode::Editing || app.input_mode == InputMode::Command {
+        let cursor = app.input_cursor.min(app.input.len());
+        let cursor = if app.input.is_char_boundary(cursor) {
+            cursor
+        } else {
+            app.input
+                .char_indices()
+                .take_while(|(i, _)| *i < cursor)
+                .map(|(i, _)| i)
+                .last()
+                .unwrap_or(0)
+        };
+
+        let input_before_cursor = &app.input[..cursor];
+
         // Calculate cursor position with wrapping
-        let lines_before = app.input[..app.input_cursor.min(app.input.len())]
-            .chars()
-            .filter(|&c| c == '\n')
-            .count();
-        let current_line_start = app.input[..app.input_cursor.min(app.input.len())]
-            .rfind('\n')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-        let col_in_line = app.input_cursor.saturating_sub(current_line_start);
+        let lines_before = input_before_cursor.chars().filter(|&c| c == '\n').count();
+        let current_line_start = input_before_cursor.rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let col_in_line = app.input[current_line_start..cursor].chars().count();
 
         f.set_cursor_position((
             area.x + (col_in_line % available_width) as u16 + 1,

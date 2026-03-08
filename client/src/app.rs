@@ -508,6 +508,49 @@ pub struct App {
 }
 
 impl App {
+    /// Clamp an index to the nearest valid UTF-8 boundary at or before `idx`.
+    fn clamp_to_char_boundary(input: &str, idx: usize) -> usize {
+        let idx = idx.min(input.len());
+        if input.is_char_boundary(idx) {
+            idx
+        } else {
+            input
+                .char_indices()
+                .take_while(|(i, _)| *i < idx)
+                .map(|(i, _)| i)
+                .last()
+                .unwrap_or(0)
+        }
+    }
+
+    /// Return the previous UTF-8 character boundary before `idx`.
+    fn prev_char_boundary(input: &str, idx: usize) -> usize {
+        let idx = Self::clamp_to_char_boundary(input, idx);
+        if idx == 0 {
+            return 0;
+        }
+
+        input
+            .char_indices()
+            .take_while(|(i, _)| *i < idx)
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(0)
+    }
+
+    /// Return the next UTF-8 character boundary after `idx`.
+    fn next_char_boundary(input: &str, idx: usize) -> usize {
+        let idx = Self::clamp_to_char_boundary(input, idx);
+        if idx >= input.len() {
+            return input.len();
+        }
+
+        match input[idx..].chars().next() {
+            Some(ch) => idx + ch.len_utf8(),
+            None => input.len(),
+        }
+    }
+
     /// Create a new application instance
     pub fn new(username: String) -> Self {
         // Create global channel
@@ -693,30 +736,29 @@ impl App {
 
     /// Add a character to the input buffer
     pub fn input_char(&mut self, c: char) {
+        self.input_cursor = Self::clamp_to_char_boundary(&self.input, self.input_cursor);
         self.input.insert(self.input_cursor, c);
-        self.input_cursor += 1;
+        self.input_cursor += c.len_utf8();
     }
 
     /// Delete character before cursor
     pub fn input_backspace(&mut self) {
+        self.input_cursor = Self::clamp_to_char_boundary(&self.input, self.input_cursor);
         if self.input_cursor > 0 {
-            self.input.remove(self.input_cursor - 1);
-            self.input_cursor -= 1;
+            let prev = Self::prev_char_boundary(&self.input, self.input_cursor);
+            self.input.replace_range(prev..self.input_cursor, "");
+            self.input_cursor = prev;
         }
     }
 
     /// Move cursor left
     pub fn input_cursor_left(&mut self) {
-        if self.input_cursor > 0 {
-            self.input_cursor -= 1;
-        }
+        self.input_cursor = Self::prev_char_boundary(&self.input, self.input_cursor);
     }
 
     /// Move cursor right
     pub fn input_cursor_right(&mut self) {
-        if self.input_cursor < self.input.len() {
-            self.input_cursor += 1;
-        }
+        self.input_cursor = Self::next_char_boundary(&self.input, self.input_cursor);
     }
 
     /// Get the current input and clear the buffer
@@ -1022,5 +1064,38 @@ impl App {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+
+    #[test]
+    fn cursor_moves_across_emoji_boundaries() {
+        let mut app = App::new("tester".to_string());
+        app.input = "/reach 👍".to_string();
+        app.input_cursor = app.input.len();
+
+        app.input_cursor_left();
+        assert_eq!(app.input_cursor, "/reach ".len());
+
+        app.input_cursor_right();
+        assert_eq!(app.input_cursor, app.input.len());
+    }
+
+    #[test]
+    fn backspace_removes_full_emoji() {
+        let mut app = App::new("tester".to_string());
+        app.input = "/react ".to_string();
+        app.input_cursor = app.input.len();
+        app.input_char('👍');
+
+        assert_eq!(app.input, "/react 👍");
+        assert_eq!(app.input_cursor, app.input.len());
+
+        app.input_backspace();
+        assert_eq!(app.input, "/react ");
+        assert_eq!(app.input_cursor, app.input.len());
     }
 }
