@@ -23,10 +23,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use network::{NetworkCommand, NetworkEvent};
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -38,7 +35,9 @@ const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
 #[derive(Parser)]
 #[command(name = "ghostwire")]
 #[command(author, version, about, long_about = None)]
-#[command(after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           Switch between chat and input modes\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit")]
+#[command(
+    after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           Switch between chat and input modes\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit"
+)]
 struct Cli {
     /// Username for the chat session (default: random ghost_XXXXXXXX)
     #[arg(value_name = "USERNAME")]
@@ -55,25 +54,25 @@ async fn main() -> anyhow::Result<()> {
     if let Err(e) = logging::init_logging() {
         eprintln!("Warning: Could not initialize logging: {}", e);
     }
-    
+
     // Load configuration from file (or create default)
     let config = config::load_config().unwrap_or_else(|e| {
         eprintln!("Warning: Could not load config: {}. Using defaults.", e);
         tracing::warn!("Could not load config: {}. Using defaults.", e);
         config::GhostWireConfig::default()
     });
-    
+
     tracing::info!("GhostWire client starting");
     tracing::info!("Server URL: {}", config.default_server_url);
-    
+
     // Parse command line arguments using clap
     let cli = Cli::parse();
-    
+
     let username = cli.username.unwrap_or_else(|| {
         // Generate a random username if none provided
         format!("ghost_{}", &uuid::Uuid::new_v4().to_string()[..8])
     });
-    
+
     // CLI args override config file
     let server_url = if cli.server_url != DEFAULT_SERVER_URL {
         cli.server_url
@@ -147,32 +146,41 @@ fn run_ui_loop(
 ) -> anyhow::Result<()> {
     // Track uptime
     let mut last_uptime_update = Instant::now();
-    
+
     // Initialize sysinfo for memory tracking
     let mut system = sysinfo::System::new_all();
     let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
     let mut last_memory_update = Instant::now();
-    
+
     // Track message cleanup for self-destruct (v0.3.0)
     let mut last_cleanup = Instant::now();
-    
+
+    // Track key rotation checks (v0.4.0)
+    let mut last_rotation_check = Instant::now();
+
     loop {
         // Update frame timing for FPS calculation
         app.update_frame_time();
-        
+
         // Cleanup expired messages every 5 seconds (v0.3.0)
         if last_cleanup.elapsed() >= Duration::from_secs(5) {
             app.cleanup_expired_messages();
             last_cleanup = Instant::now();
         }
-        
+
+        // Check key rotation every 60 seconds (v0.4.0)
+        if last_rotation_check.elapsed() >= Duration::from_secs(60) {
+            let _ = command_tx.send(NetworkCommand::CheckKeyRotation);
+            last_rotation_check = Instant::now();
+        }
+
         // Update memory usage every 500ms (don't need it every frame)
         if last_memory_update.elapsed() >= Duration::from_millis(500) {
             system.refresh_process(pid);
             app.update_memory_usage(&system, pid);
             last_memory_update = Instant::now();
         }
-        
+
         // Render the UI
         terminal.draw(|f| ui::render(f, app))?;
 
@@ -195,7 +203,7 @@ fn run_ui_loop(
             app.cleanup_typing_indicators();
             last_uptime_update = Instant::now();
         }
-        
+
         // Check if we should quit
         if app.should_quit {
             break;
@@ -245,13 +253,13 @@ fn handle_key_event(
                 KeyCode::Char('g') => {
                     app.scroll_to_top();
                 }
-                
+
                 // Channel navigation
                 KeyCode::Char('h') | KeyCode::Left => app.select_previous_channel(),
                 KeyCode::Char('l') | KeyCode::Right => app.select_next_channel(),
                 KeyCode::Tab => app.activate_selected_channel(),
                 KeyCode::Char('#') => app.switch_channel("global".to_string()),
-                
+
                 // Create DM
                 KeyCode::Char('d') => {
                     // Prompt for username (simple implementation)
@@ -262,11 +270,11 @@ fn handle_key_event(
                         }
                     }
                 }
-                
+
                 // User selection (for DM creation)
                 KeyCode::Char('J') => app.select_next_user(),
                 KeyCode::Char('K') => app.select_previous_user(),
-                
+
                 _ => {}
             }
         }
@@ -281,23 +289,136 @@ fn handle_key_event(
                     let input = app.take_input();
                     if !input.is_empty() {
                         let channel_id = app.active_channel.clone();
-                        
+
+                        // Parse /verify command: /verify <username>
+                        if let Some(peer) = input.strip_prefix("/verify ") {
+                            let peer = peer.trim().to_string();
+                            if peer.is_empty() {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /verify <username>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                            } else {
+                                let _ =
+                                    command_tx.send(NetworkCommand::VerifyPeer { username: peer });
+                            }
+                            app.exit_edit_mode();
+                            return Ok(());
+                        }
+
+                        // Parse /confirm command: /confirm <username>
+                        if let Some(peer) = input.strip_prefix("/confirm ") {
+                            let peer = peer.trim().to_string();
+                            if peer.is_empty() {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /confirm <username>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                            } else {
+                                let _ = command_tx
+                                    .send(NetworkCommand::ConfirmVerification { username: peer });
+                            }
+                            app.exit_edit_mode();
+                            return Ok(());
+                        }
+
+                        // Parse /groupkey command: /groupkey <group> <user1,user2,...>
+                        if let Some(rest) = input.strip_prefix("/groupkey ") {
+                            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                            if parts.len() != 2 {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /groupkey <group> <user1,user2,...>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                                app.exit_edit_mode();
+                                return Ok(());
+                            }
+
+                            let group_id = if parts[0].starts_with("group:") {
+                                parts[0].to_string()
+                            } else {
+                                format!("group:{}", parts[0])
+                            };
+
+                            let members: Vec<String> = parts[1]
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(ToString::to_string)
+                                .collect();
+
+                            if members.is_empty() {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /groupkey <group> <user1,user2,...>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                            } else {
+                                let _ = command_tx
+                                    .send(NetworkCommand::DistributeGroupKey { group_id, members });
+                            }
+
+                            app.exit_edit_mode();
+                            return Ok(());
+                        }
+
+                        // Parse /expire command: /expire <seconds> <message>
+                        let (content, ttl) = if let Some(rest) = input.strip_prefix("/expire ") {
+                            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                            if parts.len() == 2 {
+                                if let Ok(secs) = parts[0].parse::<i64>() {
+                                    if secs > 0 && secs <= 86400 {
+                                        (parts[1].to_string(), Some(secs))
+                                    } else {
+                                        app.add_message(ChatMessage::system_with_severity(
+                                            "Usage: /expire <1-86400> <message>".to_string(),
+                                            app::MessageSeverity::Warning,
+                                        ));
+                                        app.exit_edit_mode();
+                                        return Ok(());
+                                    }
+                                } else {
+                                    app.add_message(ChatMessage::system_with_severity(
+                                        "Usage: /expire <seconds> <message>".to_string(),
+                                        app::MessageSeverity::Warning,
+                                    ));
+                                    app.exit_edit_mode();
+                                    return Ok(());
+                                }
+                            } else {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /expire <seconds> <message>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                                app.exit_edit_mode();
+                                return Ok(());
+                            }
+                        } else {
+                            (input, None)
+                        };
+
                         // Send to network task
                         let _ = command_tx.send(NetworkCommand::SendMessage {
-                            content: input.clone(),
+                            content: content.clone(),
                             channel_id: channel_id.clone(),
+                            ttl,
                         });
-                        
+
                         // Add to local chat immediately (optimistic update)
-                        app.add_message(ChatMessage::new(
-                            app.username.clone(),
-                            input,
-                            false,
-                        ));
-                        
+                        if let Some(ttl_secs) = ttl {
+                            let msg = ChatMessage::with_expiry(
+                                app.username.clone(),
+                                format!("⏱ {}", content),
+                                false,
+                                ttl_secs,
+                            );
+                            app.add_message(msg);
+                        } else {
+                            app.add_message(ChatMessage::new(app.username.clone(), content, false));
+                        }
+
                         // Update telemetry
                         app.telemetry.messages_sent += 1;
-                        
+
                         // Stop typing indicator when sending
                         let _ = command_tx.send(NetworkCommand::SendTypingStatus {
                             channel_id: app.active_channel.clone(),
@@ -309,7 +430,7 @@ fn handle_key_event(
                 // Character input
                 KeyCode::Char(c) => {
                     app.input_char(c);
-                    
+
                     // Send typing indicator (throttled to 1 per second)
                     if app.should_send_typing_indicator() {
                         let _ = command_tx.send(NetworkCommand::SendTypingStatus {
@@ -322,7 +443,7 @@ fn handle_key_event(
                 // Backspace
                 KeyCode::Backspace => {
                     app.input_backspace();
-                    
+
                     // Send typing indicator if not empty
                     if !app.input.is_empty() && app.should_send_typing_indicator() {
                         let _ = command_tx.send(NetworkCommand::SendTypingStatus {
@@ -358,25 +479,45 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             tracing::warn!("Disconnected from server");
             app.set_connected(false);
         }
-        NetworkEvent::Message { sender, content, timestamp, channel_id, encrypted } => {
-            tracing::debug!("Received message from {} in channel {} (encrypted: {})", sender, channel_id, encrypted);
+        NetworkEvent::Message {
+            sender,
+            content,
+            timestamp,
+            channel_id,
+            encrypted,
+            ttl,
+        } => {
+            tracing::debug!(
+                "Received message from {} in channel {} (encrypted: {})",
+                sender,
+                channel_id,
+                encrypted
+            );
             // Convert Unix timestamp to DateTime
-            let datetime = chrono::DateTime::from_timestamp(timestamp, 0)
-                .unwrap_or_else(Utc::now);
-            
-            // Create message with actual timestamp and encryption status
-            let mut msg = ChatMessage::with_encryption(sender.clone(), content, encrypted);
+            let datetime = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now);
+
+            // Create message with actual timestamp, encryption status, and optional TTL
+            let mut msg = if let Some(ttl_secs) = ttl {
+                ChatMessage::with_expiry(
+                    sender.clone(),
+                    format!("⏱ {}", content),
+                    encrypted,
+                    ttl_secs,
+                )
+            } else {
+                ChatMessage::with_encryption(sender.clone(), content, encrypted)
+            };
             msg.timestamp = datetime;
-            
+
             // Add user to roster if not already there (for user discovery)
             if !app.users.iter().any(|u| u.username == sender) && sender != app.username {
                 app.add_user(User::new(sender.clone()));
             }
-            
+
             // Route to the correct channel
             app.add_message_to_channel(&channel_id, msg);
             app.telemetry.messages_received += 1;
-            
+
             // Update user activity
             app.update_user_activity(&sender);
         }
@@ -393,37 +534,106 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             // Parse error and create user-friendly message
             let user_error = errors::parse_error(&message);
             tracing::warn!("Error: {} (severity: {:?})", message, user_error.severity);
-            
+
             // Map error severity to message severity
             let msg_severity = match user_error.severity {
                 errors::ErrorSeverity::Info => app::MessageSeverity::Info,
                 errors::ErrorSeverity::Warning => app::MessageSeverity::Warning,
-                errors::ErrorSeverity::Error | errors::ErrorSeverity::Critical => app::MessageSeverity::Error,
+                errors::ErrorSeverity::Error | errors::ErrorSeverity::Critical => {
+                    app::MessageSeverity::Error
+                }
             };
-            
+
             // Add formatted error message to chat
             app.add_message(ChatMessage::system_with_severity(
                 user_error.format_for_ui(),
-                msg_severity
+                msg_severity,
             ));
         }
         NetworkEvent::LatencyUpdate { latency_ms } => {
             app.update_latency(latency_ms);
         }
-        NetworkEvent::Reconnecting { attempt, max_attempts } => {
+        NetworkEvent::Reconnecting {
+            attempt,
+            max_attempts,
+        } => {
             tracing::info!("Reconnecting: attempt {}/{}", attempt, max_attempts);
-            app.add_message(ChatMessage::system(
-                format!("Reconnecting... (attempt {}/{})", attempt, max_attempts)
-            ));
+            app.add_message(ChatMessage::system(format!(
+                "Reconnecting... (attempt {}/{})",
+                attempt, max_attempts
+            )));
         }
-        NetworkEvent::TypingStatus { username, channel_id, is_typing } => {
-            tracing::debug!("User {} typing status: {} in channel {}", username, is_typing, channel_id);
+        NetworkEvent::TypingStatus {
+            username,
+            channel_id,
+            is_typing,
+        } => {
+            tracing::debug!(
+                "User {} typing status: {} in channel {}",
+                username,
+                is_typing,
+                channel_id
+            );
             app.set_user_typing(&channel_id, &username, is_typing);
         }
-        NetworkEvent::KeyExchangeReceived { username, public_key: _ } => {
+        NetworkEvent::KeyExchangeReceived { username } => {
             tracing::info!("✓ Key exchange complete with {}", username);
             app.add_message(ChatMessage::system_with_severity(
                 format!("🔒 Secure session established with {}", username),
+                app::MessageSeverity::Info,
+            ));
+        }
+        NetworkEvent::VerificationResult {
+            username,
+            safety_number,
+            already_verified,
+        } => {
+            if already_verified {
+                app.add_message(ChatMessage::system_with_severity(
+                    format!(
+                        "✅ {} is already verified. Session fingerprint: {}",
+                        username, safety_number
+                    ),
+                    app::MessageSeverity::Info,
+                ));
+            } else {
+                app.add_message(ChatMessage::system_with_severity(
+                    format!("🔐 Session fingerprint for {}: {}", username, safety_number),
+                    app::MessageSeverity::Warning,
+                ));
+                app.add_message(ChatMessage::system_with_severity(
+                    format!(
+                        "Compare this with {} out-of-band. Type /confirm {} to trust this session.",
+                        username, username
+                    ),
+                    app::MessageSeverity::Warning,
+                ));
+            }
+        }
+        NetworkEvent::VerificationFailed { username, reason } => {
+            app.add_message(ChatMessage::system_with_severity(
+                format!("❌ Verification failed for {}: {}", username, reason),
+                app::MessageSeverity::Error,
+            ));
+        }
+        NetworkEvent::KeyRotated => {
+            app.add_message(ChatMessage::system_with_severity(
+                "🔑 Keys rotated for forward secrecy".to_string(),
+                app::MessageSeverity::Info,
+            ));
+        }
+        NetworkEvent::PeerVerified { username } => {
+            if let Some(user) = app.users.iter_mut().find(|u| u.username == username) {
+                user.verified = true;
+            }
+            app.add_message(ChatMessage::system_with_severity(
+                format!("✅ Identity of {} verified and trusted", username),
+                app::MessageSeverity::Info,
+            ));
+        }
+        NetworkEvent::SenderKeyReceived { group_id, sender } => {
+            app.add_message(ChatMessage::system_with_severity(
+                format!("🔐 Received group key from {} for {}", sender, group_id),
                 app::MessageSeverity::Info,
             ));
         }

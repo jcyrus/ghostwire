@@ -54,8 +54,8 @@ pub enum AuthError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkError {
-    SendFailed,
-    ReceiveFailed,
+    Send,
+    Receive,
     MessageTooLarge,
     ProtocolError,
 }
@@ -69,9 +69,9 @@ pub enum ConfigError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalError {
-    InitFailed,
-    RenderFailed,
-    InputFailed,
+    Init,
+    Render,
+    Input,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +97,7 @@ impl UserError {
     /// Create a new user error
     pub fn new(severity: ErrorSeverity, error_type: ErrorType, message: String) -> Self {
         let (hint, recoverable) = Self::get_hint_and_recovery(&error_type);
-        
+
         Self {
             severity,
             error_type,
@@ -106,7 +106,7 @@ impl UserError {
             recoverable,
         }
     }
-    
+
     /// Get troubleshooting hint and recovery status for an error type
     fn get_hint_and_recovery(error_type: &ErrorType) -> (Option<String>, bool) {
         match error_type {
@@ -134,7 +134,7 @@ impl UserError {
                 Some("Invalid WebSocket URL. Format: ws://host:port/path or wss://host:port/path".to_string()),
                 false
             ),
-            
+
             ErrorType::Authentication(AuthError::InvalidCredentials) => (
                 Some("Username may be invalid. Try a different username.".to_string()),
                 true
@@ -147,12 +147,12 @@ impl UserError {
                 Some("Server rejected authentication. Contact server administrator.".to_string()),
                 false
             ),
-            
-            ErrorType::Network(NetworkError::SendFailed) => (
+
+            ErrorType::Network(NetworkError::Send) => (
                 Some("Cannot send message. Check connection status.".to_string()),
                 true
             ),
-            ErrorType::Network(NetworkError::ReceiveFailed) => (
+            ErrorType::Network(NetworkError::Receive) => (
                 Some("Cannot receive messages. Connection may be unstable.".to_string()),
                 true
             ),
@@ -164,7 +164,7 @@ impl UserError {
                 Some("Protocol error. You may need to update your client.".to_string()),
                 false
             ),
-            
+
             ErrorType::Configuration(ConfigError::CannotRead) => (
                 Some("Cannot read config file. It will be created with defaults.".to_string()),
                 true
@@ -177,20 +177,20 @@ impl UserError {
                 Some("Config file is missing required fields. Using defaults.".to_string()),
                 true
             ),
-            
-            ErrorType::Terminal(TerminalError::InitFailed) => (
+
+            ErrorType::Terminal(TerminalError::Init) => (
                 Some("Cannot initialize terminal. Ensure you're running in a compatible terminal emulator.".to_string()),
                 false
             ),
-            ErrorType::Terminal(TerminalError::RenderFailed) => (
+            ErrorType::Terminal(TerminalError::Render) => (
                 Some("Cannot render UI. Try resizing your terminal window.".to_string()),
                 true
             ),
-            ErrorType::Terminal(TerminalError::InputFailed) => (
+            ErrorType::Terminal(TerminalError::Input) => (
                 Some("Cannot read keyboard input. Terminal may not be in raw mode.".to_string()),
                 false
             ),
-            
+
             ErrorType::FileSystem(FileSystemError::CannotCreateDir) => (
                 Some("Cannot create directory. Check file permissions.".to_string()),
                 true
@@ -205,7 +205,7 @@ impl UserError {
             ),
         }
     }
-    
+
     /// Format error for display in UI
     pub fn format_for_ui(&self) -> String {
         let severity_symbol = match self.severity {
@@ -214,16 +214,16 @@ impl UserError {
             ErrorSeverity::Error => "✖",
             ErrorSeverity::Critical => "⛔",
         };
-        
+
         let mut output = format!("{} {}", severity_symbol, self.message);
-        
+
         if let Some(hint) = &self.hint {
             output.push_str(&format!("\n💡 {}", hint));
         }
-        
+
         output
     }
-    
+
     /// Get color for UI based on severity
     #[allow(dead_code)]
     pub fn get_color(&self) -> ratatui::style::Color {
@@ -245,108 +245,118 @@ impl fmt::Display for UserError {
 /// Parse technical error messages into user-friendly errors
 pub fn parse_error(error_msg: &str) -> UserError {
     let error_lower = error_msg.to_lowercase();
-    
+
     // Connection errors
     if error_lower.contains("connection refused") {
         return UserError::new(
             ErrorSeverity::Error,
             ErrorType::Connection(ConnectionError::Refused),
-            "Cannot connect to server - connection refused".to_string()
+            "Cannot connect to server - connection refused".to_string(),
         );
     }
-    
+
     if error_lower.contains("timed out") || error_lower.contains("timeout") {
         return UserError::new(
             ErrorSeverity::Warning,
             ErrorType::Connection(ConnectionError::Timeout),
-            "Connection timed out".to_string()
+            "Connection timed out".to_string(),
         );
     }
-    
-    if error_lower.contains("dns") || error_lower.contains("name or service not known") 
-        || error_lower.contains("nodename nor servname provided") {
+
+    if error_lower.contains("dns")
+        || error_lower.contains("name or service not known")
+        || error_lower.contains("nodename nor servname provided")
+    {
         return UserError::new(
             ErrorSeverity::Error,
             ErrorType::Connection(ConnectionError::HostNotFound),
-            "Cannot resolve hostname".to_string()
+            "Cannot resolve hostname".to_string(),
         );
     }
-    
-    if error_lower.contains("invalid") && (error_lower.contains("url") || error_lower.contains("uri")) {
+
+    if error_lower.contains("invalid")
+        && (error_lower.contains("url") || error_lower.contains("uri"))
+    {
         return UserError::new(
             ErrorSeverity::Error,
             ErrorType::Connection(ConnectionError::InvalidUrl),
-            "Invalid server URL format".to_string()
+            "Invalid server URL format".to_string(),
         );
     }
-    
+
     if error_lower.contains("failed to connect") || error_lower.contains("connection failed") {
         return UserError::new(
             ErrorSeverity::Error,
             ErrorType::Connection(ConnectionError::CannotConnect),
-            "Failed to connect to server".to_string()
+            "Failed to connect to server".to_string(),
         );
     }
-    
+
     // Network errors
     if error_lower.contains("failed to send") || error_lower.contains("send error") {
         return UserError::new(
             ErrorSeverity::Warning,
-            ErrorType::Network(NetworkError::SendFailed),
-            "Failed to send message".to_string()
+            ErrorType::Network(NetworkError::Send),
+            "Failed to send message".to_string(),
         );
     }
-    
+
     if error_lower.contains("failed to receive") || error_lower.contains("receive error") {
         return UserError::new(
             ErrorSeverity::Warning,
-            ErrorType::Network(NetworkError::ReceiveFailed),
-            "Failed to receive message".to_string()
+            ErrorType::Network(NetworkError::Receive),
+            "Failed to receive message".to_string(),
         );
     }
-    
+
     // Config errors
     if error_lower.contains("config") && error_lower.contains("load") {
         return UserError::new(
             ErrorSeverity::Warning,
             ErrorType::Configuration(ConfigError::CannotRead),
-            "Cannot load configuration file".to_string()
+            "Cannot load configuration file".to_string(),
         );
     }
-    
+
     // File system errors
     if error_lower.contains("permission denied") || error_lower.contains("access denied") {
         return UserError::new(
             ErrorSeverity::Error,
             ErrorType::FileSystem(FileSystemError::PermissionDenied),
-            "Permission denied".to_string()
+            "Permission denied".to_string(),
         );
     }
-    
+
     // Generic fallback
     UserError::new(
         ErrorSeverity::Error,
         ErrorType::Network(NetworkError::ProtocolError),
-        format!("Error: {}", error_msg)
+        format!("Error: {}", error_msg),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{parse_error, ConnectionError, ErrorSeverity, ErrorType, UserError};
 
     #[test]
     fn test_parse_connection_refused() {
         let error = parse_error("Connection refused");
         assert_eq!(error.severity, ErrorSeverity::Error);
-        assert!(matches!(error.error_type, ErrorType::Connection(ConnectionError::Refused)));
+        assert!(matches!(
+            error.error_type,
+            ErrorType::Connection(ConnectionError::Refused)
+        ));
     }
 
     #[test]
     fn test_parse_timeout() {
         let error = parse_error("Connection timed out");
         assert_eq!(error.severity, ErrorSeverity::Warning);
-        assert!(matches!(error.error_type, ErrorType::Connection(ConnectionError::Timeout)));
+        assert!(matches!(
+            error.error_type,
+            ErrorType::Connection(ConnectionError::Timeout)
+        ));
     }
 
     #[test]
@@ -354,7 +364,7 @@ mod tests {
         let error = UserError::new(
             ErrorSeverity::Error,
             ErrorType::Connection(ConnectionError::CannotConnect),
-            "Test error".to_string()
+            "Test error".to_string(),
         );
         let formatted = error.format_for_ui();
         assert!(formatted.contains("✖"));

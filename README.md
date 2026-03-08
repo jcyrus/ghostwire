@@ -24,13 +24,14 @@
 
 ## ⚡ Core Systems
 
-| Feature                         | Description                                                                                 |
-| :------------------------------ | :------------------------------------------------------------------------------------------ |
-| **👻 Ephemeral Relay**          | The relay server is a "dumb broadcast." It routes traffic without storing or processing it. |
-| **🛡️ Client-Side Architecture** | Designed for client-side encryption. [Coming in v0.2.0]                                     |
-| **🖥️ High-Fidelity TUI**        | Built on `Ratatui`. Supports mouse capture, resizing, and custom themes.                    |
-| **🚀 Blazing Fast**             | Written in Async Rust (`Tokio`). Minimal footprint, maximum throughput.                     |
-| **🎨 Cyberpunk Aesthetics**     | Detailed telemetry, network activity charts, and real-time statistics.                      |
+| Feature                        | Description                                                                                                 |
+| :----------------------------- | :---------------------------------------------------------------------------------------------------------- |
+| **👻 Ephemeral Relay**         | The relay server is a "dumb broadcast." It routes traffic without storing or processing it.                 |
+| **🛡️ End-to-End Encryption**   | Direct messages are encrypted automatically with X25519 + ChaCha20-Poly1305 and per-message ratchets.       |
+| **🔐 Verification & Ephemera** | Safety-number verification, self-destructing messages, replay protection, and key rotation are implemented. |
+| **🖥️ High-Fidelity TUI**       | Built on `Ratatui`. Supports mouse capture, resizing, and custom themes.                                    |
+| **🚀 Blazing Fast**            | Written in Async Rust (`Tokio`). Minimal footprint, maximum throughput.                                     |
+| **🎨 Cyberpunk Aesthetics**    | Detailed telemetry, network activity charts, and real-time statistics.                                      |
 
 ---
 
@@ -140,6 +141,13 @@ ghostwire your_username ws://localhost:8080/ws
 - **`Esc`**: Exit message mode
 - **`Enter`**: Send message
 
+**Security Commands:**
+
+- **`/verify <username>`**: Show a peer's safety number for out-of-band comparison
+- **`/confirm <username>`**: Mark a peer as trusted after verifying the safety number
+- **`/expire <seconds> <message>`**: Send a self-destructing message with TTL
+- **`/groupkey <group> <user1,user2,...>`**: Manually distribute a sender key for a group channel
+
 **Navigation:**
 
 - **`Esc` or `q`**: Quit (in normal mode)
@@ -214,10 +222,13 @@ To ensure the UI never freezes at 60fps, we use a strict Actor-model separation:
 {
   "type": "MSG",
   "payload": "EncryptedBase64String...",
+  "channel": "dm:alice:bob",
   "meta": {
     "sender": "User_Hash_ID",
     "timestamp": 171542100
-  }
+  },
+  "recipient": "bob",
+  "ttl": 60
 }
 ```
 

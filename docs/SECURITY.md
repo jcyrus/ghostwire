@@ -1,8 +1,8 @@
-# GhostWire Security Model (v0.3.0)
+# GhostWire Security Model
 
-**Version**: 0.3.0  
-**Last Updated**: December 9, 2025  
-**Status**: Production Ready
+**Version**: main (post-v0.3.0, pre-v0.4.0 release)
+**Last Updated**: March 8, 2026
+**Status**: Current `main` branch security model
 
 ---
 
@@ -81,9 +81,9 @@ Each peer-to-peer session has:
 
 ```rust
 SessionKeys {
-    encryption_key: [u8; 32],  // ChaCha20-Poly1305 key
-    mac_key: [u8; 32],          // For future HMAC
-    chain_key: [u8; 32],        // For Double Ratchet (future)
+   encryption_key: [u8; 32],
+   mac_key: [u8; 32],
+   chain_key: [u8; 32],
 }
 ```
 
@@ -98,12 +98,12 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ## Security Features
 
-### ✅ Implemented (v0.3.0)
+### ✅ Implemented on `main`
 
 #### End-to-End Encryption
 
-- **Status**: ✅ Functional for direct messages
-- **Scope**: DM channels only (group encryption TBD)
+- **Status**: ✅ Functional for direct messages and group channels
+- **Scope**: DMs use pairwise session ratchets; `group:*` channels use sender keys
 - **Key Size**: 256-bit
 - **Algorithm**: X25519 + ChaCha20-Poly1305
 
@@ -111,7 +111,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 - **Status**: ✅ All keys in memory only
 - **Persistence**: None - keys cleared on exit
-- **Rotation**: 24-hour automatic rotation (implemented, not yet triggered)
+- **Rotation**: 24-hour automatic rotation with active trigger checks and re-broadcast
 
 #### Security Audit Logging
 
@@ -121,14 +121,35 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
   - Session establishment
   - Message encryption/decryption
   - Decryption failures
+  - Replay detection
+  - Key rotation
+  - Identity verification
   - Security warnings
 
 #### Self-Destructing Messages
 
-- **Status**: ✅ Infrastructure ready (TTL support)
-- **Usage**: `ChatMessage::with_expiry()` constructor
+- **Status**: ✅ Active via `/expire <seconds> <message>`
+- **Usage**: TTL is transmitted on the wire and enforced by clients
 - **Cleanup**: Every 5 seconds
 - **Secure Deletion**: Overwrites content with zeros (zeroize)
+
+#### Safety Number Verification
+
+- **Status**: ✅ `/verify <username>` and `/confirm <username>` implemented
+- **Display**: Safety number shown to user for out-of-band comparison
+- **State**: Verified peers are tracked in session state and highlighted in the roster
+
+#### Replay Protection
+
+- **Status**: ✅ Nonce-based replay protection for encrypted direct messages
+- **Method**: Track previously seen 96-bit ChaCha20-Poly1305 nonces per peer session
+- **Response**: Drop replayed ciphertext and write an audit log entry
+
+#### Group Message Encryption
+
+- **Status**: ✅ Sender-key encryption for `group:*` channels
+- **Distribution**: Manual `/groupkey` support plus automatic first-send bootstrap
+- **Ratchet**: Sender keys advance per message via a symmetric chain ratchet
 
 #### Secure Deletion
 
@@ -155,12 +176,12 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 ✅ **Man-in-the-Middle (MITM)** _(partial)_
 
 - Key exchange is authenticated
-- ⚠️ **TODO**: Manual safety number verification needed
+- Manual safety number verification is available via `/verify` and `/confirm`
 
-✅ **Replay Attacks** _(basic)_
+✅ **Replay Attacks**
 
-- Timestamps prevent old messages
-- ⚠️ **TODO**: Nonce-based replay protection
+- Nonce history detects replayed DM ciphertext
+- Replays are rejected before decryption
 
 ✅ **Memory Forensics** _(partial)_
 
@@ -184,17 +205,17 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 ❌ **Metadata Leakage**
 
 - Server sees: Who talks to whom, when, message sizes
-- **Future**: Padding, cover traffic
+- **v0.9.0**: Sealed sender, message padding, metadata minimization
 
 ❌ **Traffic Analysis**
 
 - Timing attacks, frequency analysis
-- **Future**: Tor integration option
+- **v0.9.0**: Tor integration, uniform message padding
 
-❌ **Group Message Encryption**
+✅ **Group Message Encryption**
 
-- Currently only DMs are encrypted
-- **v0.4.0**: Group E2EE with sender keys
+- Sender-key-based E2EE for `group:*` channels is implemented on `main`
+- Global broadcast remains plaintext by design
 
 ---
 
@@ -203,17 +224,14 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 ### Lifecycle
 
 1. **Generation**: On client startup
-
    - Identity keypair (Ed25519): Long-term
    - Ephemeral keypair (X25519): Session-specific
 
 2. **Storage**: In-memory only
-
    - `KeyStore` struct in RAM
    - Never written to disk
 
 3. **Rotation**: Every 24 hours (automatic)
-
    - New ephemeral key generated
    - Old sessions cleared
    - Peers re-exchange keys
@@ -228,11 +246,13 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ```rust
 PeerSession {
-    their_public_key: PublicKey,
-    session_keys: SessionKeys,
-    created_at: DateTime,
-    last_message_at: DateTime,
-    verified: bool,  // ⚠️ Not yet implemented
+   their_public_key: PublicKey,
+   session_keys: SessionKeys,
+   created_at: DateTime,
+   last_message_at: DateTime,
+   verified: bool,
+   send_chain: [u8; 32],
+   recv_chain: [u8; 32],
 }
 ```
 
@@ -245,7 +265,7 @@ PeerSession {
 
 ## Identity Verification
 
-### Safety Numbers (Future Feature)
+### Safety Numbers
 
 **Goal**: Verify you're talking to the right person (prevent MITM)
 
@@ -255,7 +275,7 @@ PeerSession {
 safety_number = SHA256(your_public_key || their_public_key)
 ```
 
-**Usage** (planned):
+**Usage**:
 
 1. Alice and Bob both see same safety number
 2. Compare out-of-band (phone call, in person)
@@ -338,7 +358,6 @@ Each message uses a different key derived from the chain key.
 ### For Users
 
 1. **Verify Safety Numbers** (when available)
-
    - Compare with your contact out-of-band
    - Watch for warnings if keys change
 
@@ -350,7 +369,6 @@ Each message uses a different key derived from the chain key.
    ```
 
 3. **Check Encryption Status**
-
    - Look for 🔒 icon in chat
    - Encrypted messages show lock symbol
 
@@ -361,7 +379,6 @@ Each message uses a different key derived from the chain key.
 ### For Developers
 
 1. **Never Log Decrypted Content**
-
    - Only log metadata, not plaintext
 
 2. **Use Secure Deletion**
@@ -371,7 +388,6 @@ Each message uses a different key derived from the chain key.
    ```
 
 3. **Validate Public Keys**
-
    - Check key length (32 bytes for X25519)
    - Verify base64 encoding
 
@@ -383,26 +399,23 @@ Each message uses a different key derived from the chain key.
 
 ## Known Limitations
 
-### v0.3.0
+### Historical v0.3.0 Limitations
 
 1. **No Identity Verification UI**
-
-   - Safety numbers computed but not displayed
-   - Cannot manually verify peers
+   - This was true in v0.3.0 only
+   - `main` now supports `/verify` and `/confirm`
 
 2. **No Group Encryption**
-
    - Only 1-on-1 DMs are encrypted
    - Global channel is plaintext
 
 3. **Metadata Exposed**
-
    - Server sees: who, when, message count
    - No traffic padding or cover traffic
 
-4. **No Replay Protection**
-
-   - Timestamps only, no nonce tracking
+4. **Replay Protection Absent in v0.3.0**
+   - This was true in v0.3.0 only
+   - `main` now uses per-session nonce tracking
 
 5. **Trust On First Use (TOFU)**
    - First key exchange is unauthenticated
@@ -453,26 +466,31 @@ We follow **responsible disclosure**:
 
 ## Future Roadmap
 
-### v0.4.0 - Enhanced E2EE
+### v0.4.0 - Complete the Security Story
 
-- [ ] Safety number verification UI
-- [ ] Per-message keys (Double Ratchet)
-- [ ] Group message encryption
-- [ ] Key rotation triggers
+- [x] Safety number verification UI
+- [x] Self-destruct UI command (`/expire <seconds>`)
+- [x] Key rotation trigger activation
+- [x] Per-message keys (Double Ratchet)
+- [x] Replay protection (nonce tracking)
+- [x] Group message encryption (sender keys)
 
-### v0.5.0 - Privacy Features
+### v0.9.0 - Advanced Privacy
 
-- [ ] Metadata padding
-- [ ] Cover traffic
-- [ ] Anonymous mode
+- [ ] Sealed sender (hide sender identity from relay)
+- [ ] Metadata minimization
+- [ ] Message padding (uniform ciphertext sizes)
 - [ ] Tor integration option
+- [ ] Session resumption without key re-exchange
+- [ ] Multi-device identity
 
 ### v1.0.0 - Production Hardening
 
-- [ ] Third-party security audit
+- [ ] Third-party cryptographic audit
 - [ ] Penetration testing
 - [ ] Bug bounty program
-- [ ] Formal cryptographic proofs
+- [ ] Reproducible builds
+- [ ] Formal verification of crypto paths
 
 ---
 
