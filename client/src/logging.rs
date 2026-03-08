@@ -78,15 +78,14 @@ pub fn cleanup_old_logs(retention_days: u32) -> anyhow::Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(modified) = metadata.modified() {
-                    if modified < cutoff_time && std::fs::remove_file(&path).is_ok() {
-                        deleted_count += 1;
-                        tracing::debug!("Deleted old log file: {}", path.display());
-                    }
-                }
-            }
+        if path.is_file()
+            && let Ok(metadata) = entry.metadata()
+            && let Ok(modified) = metadata.modified()
+            && modified < cutoff_time
+            && std::fs::remove_file(&path).is_ok()
+        {
+            deleted_count += 1;
+            tracing::debug!("Deleted old log file: {}", path.display());
         }
     }
 

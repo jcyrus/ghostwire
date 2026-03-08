@@ -2,7 +2,7 @@
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 
-**Current Version**: v0.4.0
+**Current Version**: v0.5.0
 **Last Updated**: 2026-03-08
 
 ---
@@ -77,36 +77,42 @@ _Finishes what v0.3.0 started — every feature below has infrastructure already
 
 ---
 
-## 💬 Rich Messaging & UI/UX Evolution (v0.5.0)
+### v0.5.0 - Rich Messaging & UI/UX Evolution
 
-**Theme**: Expressive Terminal Communication
+**Released**: March 2026
 
-### Message Formatting
+_Expressive terminal communication — markdown rendering, emoji reactions, and a polished editing experience._
 
-- [ ] **Code Blocks** - Syntax-highlighted code snippets in chat
-- [ ] **Markdown Support** - Bold, italic, inline code, block quotes
-- [ ] **Action Commands** - Support for the classic IRC `/me` command with unique italicized visual rendering
-- [ ] **Reactions** - Emoji reactions to messages
-- [ ] **Message Editing** - Edit a sent message within a time window
-- [ ] **Message Threading** - Reply to a specific message (UUIDs already on `ChatMessage`)
+#### Message Formatting
 
-### UI/UX
+- [x] **Code Blocks** - Syntax-highlighted code snippets in chat (triple-backtick fenced blocks) ✅
+- [x] **Markdown Support** - Bold (`**`), italic (`*` / `_`), inline code, and block quotes ✅
+- [x] **Action Commands** - `/me <action>` with italicized magenta rendering ✅
+- [x] **Reactions** - `/react <emoji>` and quick-react (`r`) with per-message aggregated counts ✅
 
-- [ ] **Procedural User Colors** - Generate unique, consistent colors for usernames based on their cryptographic identity
-- [ ] **Command Palette** - A dedicated input mode for `/` commands to separate them from standard chat
-- [ ] **Focus Mode** - A keyboard toggle (`F10`) to collapse the telemetry sidebar for a wider chat view
+#### UI/UX
 
-### Discovery & History
+- [x] **Procedural User Colors** - Deterministic username colors derived from peer X25519 public keys ✅
+- [x] **Command Palette** - Dedicated `InputMode::Command` with inline hints and cyan border ✅
+- [x] **Focus Mode** - `F10` toggles the telemetry sidebar for a wider chat view ✅
 
-- [ ] **Search** - Full-text search over local message history
-- [ ] **Pinned Messages** - Pin important messages in a channel
-- [ ] **Jump to Date** - Navigate history by timestamp
+#### Bug Fixes
+
+- [x] **Unicode-safe input handling** - Cursor movement, insertion, and backspace are now char-boundary-aware; emoji in `/react` and chat input no longer panic ✅
 
 ---
 
 ## 👥 Groups & the IRC Era (v0.6.0)
 
 **Theme**: Multi-User Collaboration Meets Classic IRC
+
+### Deferred from v0.5.0
+
+- [ ] **Message Editing** - Edit a sent message within a time window
+- [ ] **Message Threading** - Reply to a specific message (UUIDs already on `ChatMessage`)
+- [ ] **Search** - Full-text search over local message history
+- [ ] **Pinned Messages** - Pin important messages in a channel
+- [ ] **Jump to Date** - Navigate history by timestamp
 
 ### Group Channels
 

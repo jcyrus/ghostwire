@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-08
+
+### Added
+
+- **Markdown rendering** in chat messages: bold (`**`), italic (`*` / `_`), inline code, block quotes (`>`), and fenced code blocks (triple backticks) with syntax highlighting.
+- **Action messages** via `/me <action>` — displayed in italic magenta (e.g. _\* alice waves hello_).
+- **Emoji reactions** via `/react <emoji>` (or `/react <message_id> <emoji>`) with aggregated counts below messages; quick-react shortcut `r` in Normal mode.
+- **Procedural username colors** — unique, deterministic colors derived from each peer's X25519 public key with fallback hash-based coloring.
+- **Command palette** — dedicated `Command` input mode triggered by typing `/` first, with cyan border and inline command hints.
+- **Focus mode** — press `F10` to toggle the telemetry sidebar and expand the chat area.
+- **Fonts & terminal recommendations** section in the User Guide for proper emoji rendering.
+
+### Fixed
+
+- **Emoji crash** — input cursor movement, character insertion, and backspace are now UTF-8 char-boundary-aware; typing or reacting with emoji (e.g. `/react 👍`) no longer panics on multi-byte characters.
+- Prevented potential division-by-zero in input box cursor rendering on very narrow terminals.
+
 ## [0.4.1] - 2026-03-08
 
 ### Fixed

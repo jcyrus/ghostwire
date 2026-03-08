@@ -2,11 +2,12 @@
 // Manages ephemeral encryption keys with automatic rotation
 
 use crate::crypto::{
-    compute_safety_number, decode_public_key, decode_verifying_key, derive_session_keys,
-    encode_public_key, encode_verifying_key, generate_ephemeral_keypair, generate_identity_keypair,
-    ratchet_chain_key, sign_message, verify_signature, EphemeralKeypair, IdentityKeypair,
+    EphemeralKeypair, IdentityKeypair, compute_safety_number, decode_public_key,
+    decode_verifying_key, derive_session_keys, encode_public_key, encode_verifying_key,
+    generate_ephemeral_keypair, generate_identity_keypair, ratchet_chain_key, sign_message,
+    verify_signature,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Utc};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -80,10 +81,10 @@ impl PeerSession {
             return;
         }
         // Evict oldest if at capacity
-        if self.seen_nonces.len() >= MAX_NONCE_HISTORY {
-            if let Some(oldest) = self.nonce_order.pop_front() {
-                self.seen_nonces.remove(&oldest);
-            }
+        if self.seen_nonces.len() >= MAX_NONCE_HISTORY
+            && let Some(oldest) = self.nonce_order.pop_front()
+        {
+            self.seen_nonces.remove(&oldest);
         }
         self.seen_nonces.insert(*nonce);
         self.nonce_order.push_back(*nonce);

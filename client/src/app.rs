@@ -452,6 +452,9 @@ pub struct App {
     /// Current username
     pub username: String,
 
+    /// Current server URL
+    pub server_url: String,
+
     /// All channels (keyed by channel ID)
     pub channels: std::collections::HashMap<String, Channel>,
 
@@ -487,6 +490,9 @@ pub struct App {
 
     /// Should quit the application
     pub should_quit: bool,
+
+    /// Whether the quit confirmation popup is visible
+    pub show_quit_confirmation: bool,
 
     /// Whether the telemetry sidebar is visible (v0.5.0 Focus Mode)
     pub show_telemetry: bool,
@@ -552,12 +558,12 @@ impl App {
     }
 
     /// Create a new application instance
-    pub fn new(username: String) -> Self {
+    pub fn new(username: String, server_url: String) -> Self {
         // Create global channel
         let mut global_channel = Channel::global();
         global_channel.add_message(ChatMessage::system(format!(
-            "Welcome to GhostWire, {}!",
-            username
+            "Welcome to GhostWire, {}!\nConnected server: {}",
+            username, server_url
         )));
 
         // Initialize channels map
@@ -566,6 +572,7 @@ impl App {
 
         Self {
             username,
+            server_url,
             channels,
             active_channel: "global".to_string(),
             selected_channel: 0,
@@ -578,6 +585,7 @@ impl App {
             telemetry: Telemetry::default(),
             is_connected: false,
             should_quit: false,
+            show_quit_confirmation: false,
             show_telemetry: true,
             timestamp_format: TimestampFormat::default(),
             last_typing_sent: None,
@@ -668,11 +676,11 @@ impl App {
         username: &str,
         emoji: &str,
     ) -> bool {
-        if let Some(channel) = self.channels.get_mut(channel_id) {
-            if let Some(message) = channel.messages.iter_mut().find(|m| m.id == message_id) {
-                message.add_reaction(username, emoji);
-                return true;
-            }
+        if let Some(channel) = self.channels.get_mut(channel_id)
+            && let Some(message) = channel.messages.iter_mut().find(|m| m.id == message_id)
+        {
+            message.add_reaction(username, emoji);
+            return true;
         }
         false
     }
@@ -1027,7 +1035,18 @@ impl App {
 
     /// Quit the application
     pub fn quit(&mut self) {
+        self.show_quit_confirmation = false;
         self.should_quit = true;
+    }
+
+    /// Show the quit confirmation popup.
+    pub fn request_quit_confirmation(&mut self) {
+        self.show_quit_confirmation = true;
+    }
+
+    /// Hide the quit confirmation popup.
+    pub fn cancel_quit_confirmation(&mut self) {
+        self.show_quit_confirmation = false;
     }
 
     /// Clean up expired messages (self-destruct feature - v0.3.0)
@@ -1073,7 +1092,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_across_emoji_boundaries() {
-        let mut app = App::new("tester".to_string());
+        let mut app = App::new("tester".to_string(), "wss://example.test/ws".to_string());
         app.input = "/reach 👍".to_string();
         app.input_cursor = app.input.len();
 
@@ -1086,7 +1105,7 @@ mod tests {
 
     #[test]
     fn backspace_removes_full_emoji() {
-        let mut app = App::new("tester".to_string());
+        let mut app = App::new("tester".to_string(), "wss://example.test/ws".to_string());
         app.input = "/react ".to_string();
         app.input_cursor = app.input.len();
         app.input_char('👍');

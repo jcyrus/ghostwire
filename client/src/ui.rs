@@ -3,11 +3,11 @@
 
 use crate::app::{App, InputMode};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
-    Frame,
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
 use std::hash::{Hash, Hasher};
 
@@ -39,6 +39,56 @@ pub fn render(f: &mut Frame, app: &App) {
     if app.show_telemetry {
         render_telemetry(f, app, chunks[2]);
     }
+
+    if app.show_quit_confirmation {
+        render_quit_confirmation(f);
+    }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(height.min(area.height)),
+            Constraint::Fill(1),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(width.min(area.width)),
+            Constraint::Fill(1),
+        ])
+        .split(vertical[1])[1]
+}
+
+fn render_quit_confirmation(f: &mut Frame) {
+    let popup_area = centered_rect(44, 7, f.area());
+    let text = vec![
+        Line::from(Span::styled(
+            "Quit GhostWire?",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("Your current session will be closed."),
+        Line::from("Enter/Y/Q to quit, Esc/N to cancel."),
+    ];
+
+    let popup = Paragraph::new(text).block(
+        Block::default()
+            .title(" Confirm Quit ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup, popup_area);
 }
 
 /// Render the channel list (left sidebar)
@@ -203,6 +253,7 @@ fn render_chat_area(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     render_messages(f, app, chunks[0]);
+    f.render_widget(Clear, chunks[1]);
     render_input_box(f, app, chunks[1]);
     render_typing_indicator(f, app, chunks[1]);
 }
@@ -581,32 +632,34 @@ fn parse_inline_markdown(input: &str) -> Vec<Span<'static>> {
     };
 
     while i < chars.len() {
-        if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
-            if let Some(end) = find_closing_double_star(&chars, i + 2) {
-                flush_plain(&mut plain, &mut spans);
-                let bold_text: String = chars[i + 2..end].iter().collect();
-                spans.push(Span::styled(
-                    bold_text,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                i = end + 2;
-                continue;
-            }
+        if i + 1 < chars.len()
+            && chars[i] == '*'
+            && chars[i + 1] == '*'
+            && let Some(end) = find_closing_double_star(&chars, i + 2)
+        {
+            flush_plain(&mut plain, &mut spans);
+            let bold_text: String = chars[i + 2..end].iter().collect();
+            spans.push(Span::styled(
+                bold_text,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            i = end + 2;
+            continue;
         }
 
-        if chars[i] == '`' {
-            if let Some(end) = find_closing_char(&chars, i + 1, '`') {
-                flush_plain(&mut plain, &mut spans);
-                let code_text: String = chars[i + 1..end].iter().collect();
-                spans.push(Span::styled(
-                    code_text,
-                    Style::default().fg(Color::Green).bg(Color::DarkGray),
-                ));
-                i = end + 1;
-                continue;
-            }
+        if chars[i] == '`'
+            && let Some(end) = find_closing_char(&chars, i + 1, '`')
+        {
+            flush_plain(&mut plain, &mut spans);
+            let code_text: String = chars[i + 1..end].iter().collect();
+            spans.push(Span::styled(
+                code_text,
+                Style::default().fg(Color::Green).bg(Color::DarkGray),
+            ));
+            i = end + 1;
+            continue;
         }
 
         if chars[i] == '*' || chars[i] == '_' {
@@ -697,60 +750,65 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    // Wrap text if it's too long
-    let available_width = area.width.saturating_sub(4).max(1) as usize; // Subtract borders and padding
-    let input_text = wrap_text(&app.input, available_width);
+    // Keep input rendering single-line and horizontally scroll when needed.
+    // This keeps displayed text and cursor math in the same coordinate space.
+    let available_width = area.width.saturating_sub(2).max(1) as usize; // Inner width inside borders
 
-    let input = Paragraph::new(input_text)
-        .style(input_style)
-        .block(
-            Block::default()
-                .title(mode_indicator)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(input_style),
-        )
-        .wrap(ratatui::widgets::Wrap { trim: false });
+    let cursor_byte = app.input_cursor.min(app.input.len());
+    let cursor_byte = if app.input.is_char_boundary(cursor_byte) {
+        cursor_byte
+    } else {
+        app.input
+            .char_indices()
+            .take_while(|(i, _)| *i < cursor_byte)
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(0)
+    };
 
-    f.render_widget(input, area);
+    let cursor_char = app.input[..cursor_byte].chars().count();
+    let input_chars: Vec<char> = app.input.chars().collect();
+
+    let window_start = cursor_char.saturating_sub(available_width.saturating_sub(1));
+    let window_end = (window_start + available_width).min(input_chars.len());
+    let input_text: String = input_chars[window_start..window_end].iter().collect();
+
+    let input_box = Block::default()
+        .title(mode_indicator)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(input_style);
+    f.render_widget(input_box, area);
+
+    // Render text directly into the first inner row.
+    let input_line_area = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    let input = Paragraph::new(input_text).style(input_style);
+    f.render_widget(input, input_line_area);
 
     // Show cursor in edit mode
     if app.input_mode == InputMode::Editing || app.input_mode == InputMode::Command {
-        let cursor = app.input_cursor.min(app.input.len());
-        let cursor = if app.input.is_char_boundary(cursor) {
-            cursor
-        } else {
-            app.input
-                .char_indices()
-                .take_while(|(i, _)| *i < cursor)
-                .map(|(i, _)| i)
-                .last()
-                .unwrap_or(0)
-        };
+        let cursor_col = cursor_char.saturating_sub(window_start);
 
-        let input_before_cursor = &app.input[..cursor];
-
-        // Calculate cursor position with wrapping
-        let lines_before = input_before_cursor.chars().filter(|&c| c == '\n').count();
-        let current_line_start = input_before_cursor.rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let col_in_line = app.input[current_line_start..cursor].chars().count();
-
-        f.set_cursor_position((
-            area.x + (col_in_line % available_width) as u16 + 1,
-            area.y + (lines_before + col_in_line / available_width) as u16 + 1,
-        ));
+        f.set_cursor_position((area.x + cursor_col as u16 + 1, area.y + 1));
     }
 }
 
 /// Render typing indicator
 fn render_typing_indicator(f: &mut Frame, app: &App, area: Rect) {
-    if area.height < 3 || area.width < 3 {
+    // Need at least 2 inner rows in the boxed input panel:
+    // row 1 = input text, row 2 = typing/command hint.
+    if area.height < 4 || area.width < 3 {
         return;
     }
 
     let indicator_area = Rect {
         x: area.x + 1,
-        y: area.y + area.height - 2,
+        y: area.y + 2,
         width: area.width.saturating_sub(2),
         height: 1,
     };
@@ -822,7 +880,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Compact activity summary
+            Constraint::Length(7), // Compact activity summary
             Constraint::Min(10),   // Commands reference
         ])
         .split(area);
@@ -883,6 +941,10 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Cyan),
             ),
         ]),
+        Line::from(vec![
+            Span::styled(" 🌐 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(app.server_url.clone(), Style::default().fg(Color::Cyan)),
+        ]),
     ];
 
     let summary = Paragraph::new(summary_text).block(
@@ -908,7 +970,7 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled(" q/Esc   ", Style::default().fg(Color::Cyan)),
-            Span::styled("Quit", Style::default().fg(Color::White)),
+            Span::styled("Quit (confirm)", Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
             Span::styled(" j/k ↑↓  ", Style::default().fg(Color::Cyan)),
@@ -1080,37 +1142,6 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// Wrap text to fit within a specific width
-fn wrap_text(text: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return text.to_string();
-    }
-
-    let mut result = String::new();
-    let mut current_line_len = 0;
-
-    for word in text.split_whitespace() {
-        let word_len = word.chars().count();
-
-        if current_line_len == 0 {
-            // First word on the line
-            result.push_str(word);
-            current_line_len = word_len;
-        } else if current_line_len + 1 + word_len <= max_width {
-            // Word fits on current line
-            result.push(' ');
-            result.push_str(word);
-            current_line_len += 1 + word_len;
-        } else {
-            // Word doesn't fit, start new line
-            result.push('\n');
-            result.push_str(word);
-            current_line_len = word_len;
-        }
-    }
-
-    result
-}
-
 /// Wrap message content into multiple lines
 fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {

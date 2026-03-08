@@ -247,13 +247,13 @@ pub async fn network_task(
             reaction_emoji: None,
         };
 
-        if let Ok(json) = serde_json::to_string(&auth_msg) {
-            if let Err(e) = write.send(Message::Text(json.into())).await {
-                let _ = event_tx.send(NetworkEvent::Error {
-                    message: format!("Failed to authenticate: {}", e),
-                });
-                return;
-            }
+        if let Ok(json) = serde_json::to_string(&auth_msg)
+            && let Err(e) = write.send(Message::Text(json.into())).await
+        {
+            let _ = event_tx.send(NetworkEvent::Error {
+                message: format!("Failed to authenticate: {}", e),
+            });
+            return;
         }
 
         // Send key exchange message to announce our public key (v0.3.0)
@@ -279,10 +279,10 @@ pub async fn network_task(
             reaction_emoji: None,
         };
 
-        if let Ok(json) = serde_json::to_string(&key_exchange_msg) {
-            if let Err(e) = write.send(Message::Text(json.into())).await {
-                tracing::warn!("Failed to send key exchange: {}", e);
-            }
+        if let Ok(json) = serde_json::to_string(&key_exchange_msg)
+            && let Err(e) = write.send(Message::Text(json.into())).await
+        {
+            tracing::warn!("Failed to send key exchange: {}", e);
         }
 
         // Heartbeat interval - send ping every 30 seconds to keep connection alive
@@ -353,12 +353,12 @@ pub async fn network_task(
                         }
                         Ok(Message::Pong(data)) => {
                             // Server responded to our ping - calculate round-trip time
-                            if let Ok(mut timestamps) = ping_timestamps.lock() {
-                                if let Some(sent_time) = timestamps.remove(data.as_ref()) {
-                                    let rtt = sent_time.elapsed();
-                                    let latency_ms = rtt.as_millis() as u64;
-                                    let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
-                                }
+                            if let Ok(mut timestamps) = ping_timestamps.lock()
+                                && let Some(sent_time) = timestamps.remove(data.as_ref())
+                            {
+                                let rtt = sent_time.elapsed();
+                                let latency_ms = rtt.as_millis() as u64;
+                                let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
                             }
                         }
                         Ok(Message::Close(_)) => {
@@ -540,10 +540,10 @@ pub async fn network_task(
                                 reaction_emoji: None,
                             };
 
-                            if let Ok(json) = serde_json::to_string(&msg) {
-                                if let Err(e) = write.send(Message::Text(json.into())).await {
-                                    tracing::debug!("Failed to send typing status: {}", e);
-                                }
+                            if let Ok(json) = serde_json::to_string(&msg)
+                                && let Err(e) = write.send(Message::Text(json.into())).await
+                            {
+                                tracing::debug!("Failed to send typing status: {}", e);
                             }
                         }
                         NetworkCommand::VerifyPeer { username: peer_username } => {
@@ -737,12 +737,12 @@ pub async fn network_task(
                                     reaction_to: None,
                                     reaction_emoji: None,
                                 };
-                                if let Ok(json) = serde_json::to_string(&msg) {
-                                    if write.send(Message::Text(json.into())).await.is_ok() {
-                                        let mut store = keystore.lock().unwrap();
-                                        if let Ok(session) = store.get_session(member) {
-                                            session.commit_send();
-                                        }
+                                if let Ok(json) = serde_json::to_string(&msg)
+                                    && write.send(Message::Text(json.into())).await.is_ok()
+                                {
+                                    let mut store = keystore.lock().unwrap();
+                                    if let Ok(session) = store.get_session(member) {
+                                        session.commit_send();
                                     }
                                 }
                             }
@@ -771,12 +771,12 @@ pub async fn network_task(
                                 reaction_emoji: Some(emoji),
                             };
 
-                            if let Ok(json) = serde_json::to_string(&msg) {
-                                if let Err(e) = write.send(Message::Text(json.into())).await {
-                                    let _ = event_tx.send(NetworkEvent::Error {
-                                        message: format!("Failed to send reaction: {}", e),
-                                    });
-                                }
+                            if let Ok(json) = serde_json::to_string(&msg)
+                                && let Err(e) = write.send(Message::Text(json.into())).await
+                            {
+                                let _ = event_tx.send(NetworkEvent::Error {
+                                    message: format!("Failed to send reaction: {}", e),
+                                });
                             }
                         }
                         NetworkCommand::Disconnect => {
@@ -882,25 +882,25 @@ fn handle_wire_message(
                     // Replay protection: extract nonce and check for duplicates
                     let mut extracted_nonce: Option<[u8; 12]> = None;
                     let decrypted = {
-                        if let Ok(payload_bytes) = BASE64.decode(&msg.payload) {
-                            if payload_bytes.len() >= 12 {
-                                let mut nonce = [0u8; 12];
-                                nonce.copy_from_slice(&payload_bytes[..12]);
-                                if session.nonce_seen(&nonce) {
-                                    tracing::warn!(
-                                        "Replay attack detected from {}",
-                                        msg.meta.sender
-                                    );
-                                    audit_logger.lock().unwrap().log(
-                                        SecurityEvent::ReplayDetected {
-                                            sender: msg.meta.sender.clone(),
-                                            nonce: hex::encode(nonce),
-                                        },
-                                    );
-                                    return;
-                                }
-                                extracted_nonce = Some(nonce);
+                        if let Ok(payload_bytes) = BASE64.decode(&msg.payload)
+                            && payload_bytes.len() >= 12
+                        {
+                            let mut nonce = [0u8; 12];
+                            nonce.copy_from_slice(&payload_bytes[..12]);
+                            if session.nonce_seen(&nonce) {
+                                tracing::warn!(
+                                    "Replay attack detected from {}",
+                                    msg.meta.sender
+                                );
+                                audit_logger.lock().unwrap().log(
+                                    SecurityEvent::ReplayDetected {
+                                        sender: msg.meta.sender.clone(),
+                                        nonce: hex::encode(nonce),
+                                    },
+                                );
+                                return;
                             }
+                            extracted_nonce = Some(nonce);
                         }
 
                         let msg_key = session.derive_recv_key();
@@ -1010,10 +1010,10 @@ fn handle_wire_message(
         }
         MessageType::KeyExchange => {
             // If a key exchange is targeted, only the intended recipient should process it.
-            if let Some(recipient) = &msg.recipient {
-                if recipient != local_username {
-                    return;
-                }
+            if let Some(recipient) = &msg.recipient
+                && recipient != local_username
+            {
+                return;
             }
 
             // Store peer's public key and establish session
@@ -1095,28 +1095,28 @@ fn handle_wire_message(
                 return;
             };
 
-            if let Ok(payload_bytes) = BASE64.decode(payload_b64) {
-                if payload_bytes.len() == 64 {
-                    let mut key = [0u8; 32];
-                    let mut chain_key = [0u8; 32];
-                    key.copy_from_slice(&payload_bytes[..32]);
-                    chain_key.copy_from_slice(&payload_bytes[32..]);
+            if let Ok(payload_bytes) = BASE64.decode(payload_b64)
+                && payload_bytes.len() == 64
+            {
+                let mut key = [0u8; 32];
+                let mut chain_key = [0u8; 32];
+                key.copy_from_slice(&payload_bytes[..32]);
+                chain_key.copy_from_slice(&payload_bytes[32..]);
 
-                    let mut store = keystore.lock().unwrap();
-                    store.store_sender_key(&msg.channel, &msg.meta.sender, key, chain_key);
-                    drop(store);
+                let mut store = keystore.lock().unwrap();
+                store.store_sender_key(&msg.channel, &msg.meta.sender, key, chain_key);
+                drop(store);
 
-                    tracing::info!(
-                        "Received sender key from {} for group {}",
-                        msg.meta.sender,
-                        msg.channel
-                    );
+                tracing::info!(
+                    "Received sender key from {} for group {}",
+                    msg.meta.sender,
+                    msg.channel
+                );
 
-                    let _ = event_tx.send(NetworkEvent::SenderKeyReceived {
-                        group_id: msg.channel,
-                        sender: msg.meta.sender,
-                    });
-                }
+                let _ = event_tx.send(NetworkEvent::SenderKeyReceived {
+                    group_id: msg.channel,
+                    sender: msg.meta.sender,
+                });
             }
         }
     }

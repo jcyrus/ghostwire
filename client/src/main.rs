@@ -17,7 +17,7 @@ mod ui;
 use app::{App, ChatMessage, InputMode, User};
 use chrono::Utc;
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use network::{NetworkCommand, NetworkEvent};
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -45,6 +45,10 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("failed to install rustls crypto provider"))?;
+
     // Initialize logging system
     if let Err(e) = logging::init_logging() {
         eprintln!("Warning: Could not initialize logging: {}", e);
@@ -76,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Create the application state with configuration
-    let mut app = App::new(username.clone());
+    let mut app = App::new(username.clone(), server_url.clone());
     app.timestamp_format = config.timestamp_format.clone();
 
     // Create channels for communication between UI and network task
@@ -175,10 +179,11 @@ fn run_ui_loop(
         }
 
         // Check for terminal events (blocking with timeout)
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                handle_key_event(app, key.code, key.modifiers, command_tx)?;
-            }
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+            && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+        {
+            handle_key_event(app, key.code, key.modifiers, command_tx)?;
         }
 
         // Update uptime every second
@@ -205,12 +210,22 @@ fn handle_key_event(
     _modifiers: KeyModifiers,
     command_tx: &mpsc::UnboundedSender<NetworkCommand>,
 ) -> anyhow::Result<()> {
+    if app.show_quit_confirmation {
+        match key {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('q') => app.quit(),
+            KeyCode::Esc | KeyCode::Char('n') => app.cancel_quit_confirmation(),
+            _ => {}
+        }
+
+        return Ok(());
+    }
+
     match app.input_mode {
         InputMode::Normal => {
             match key {
                 // Quit
                 KeyCode::Char('q') | KeyCode::Esc => {
-                    app.quit();
+                    app.request_quit_confirmation();
                 }
                 // Enter edit mode
                 KeyCode::Char('i') | KeyCode::Enter => {
@@ -275,6 +290,10 @@ fn handle_key_event(
         }
         InputMode::Editing | InputMode::Command => {
             match key {
+                // Fast quit from edit/command when nothing is being typed.
+                KeyCode::Char('q') if app.input.is_empty() => {
+                    app.request_quit_confirmation();
+                }
                 // Exit edit mode
                 KeyCode::Esc => {
                     app.exit_edit_mode();

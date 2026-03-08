@@ -21,7 +21,8 @@ ratatui = { version = "0.30", features = ["crossterm", "macros"] }
 crossterm = "0.29"
 
 # WebSocket Client
-tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23.37", features = ["ring"] }
 futures-util = "0.3"
 
 # Additional utilities
