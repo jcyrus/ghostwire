@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-08
+
+### Fixed
+
+- Release workflow now generates SHA256 sidecars with `Get-FileHash`, which works on Windows runners.
+- Removed failing Linux ARM64 release target from the matrix to keep release publishing and distribution notifications reliable.
+
 ## [0.4.0] - 2026-03-08
 
 ### Added
@@ -280,7 +287,8 @@ See `docs/SECURITY.md` for complete details.
 - No group channels yet (reserved for future)
 - Server broadcasts all messages to all clients (no server-side filtering)
 
-[Unreleased]: https://github.com/jcyrus/GhostWire/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jcyrus/GhostWire/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jcyrus/GhostWire/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jcyrus/GhostWire/compare/v0.3.2...v0.4.0
 [0.1.2]: https://github.com/jcyrus/GhostWire/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jcyrus/GhostWire/compare/v0.1.0...v0.1.1
