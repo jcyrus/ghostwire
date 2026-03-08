@@ -113,7 +113,7 @@ cargo build --release -p ghostwire-client
 **Check your current version:**
 
 ```bash
-ghostwire --version  # Coming soon in v0.2.0
+ghostwire --version
 ```
 
 ---

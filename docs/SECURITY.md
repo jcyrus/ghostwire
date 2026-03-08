@@ -1,8 +1,8 @@
 # GhostWire Security Model
 
-**Version**: main (post-v0.3.0, pre-v0.4.0 release)
+**Version**: v0.4.0
 **Last Updated**: March 8, 2026
-**Status**: Current `main` branch security model
+**Status**: Released security model
 
 ---
 

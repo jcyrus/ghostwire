@@ -67,7 +67,7 @@ pub fn generate_ephemeral_keypair() -> EphemeralKeypair {
 pub fn derive_session_keys(
     our_secret: &StaticSecret,
     their_public: &PublicKey,
-    info: &[u8], // Context info (e.g., "GhostWire v0.3.0")
+    info: &[u8], // Context info (e.g., "GhostWire v0.4.0")
 ) -> Result<SessionKeys> {
     // Perform ECDH
     let shared_secret = our_secret.diffie_hellman(their_public);

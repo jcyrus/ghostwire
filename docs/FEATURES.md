@@ -2,9 +2,9 @@
 
 ## Overview
 
-GhostWire now includes the v0.4.0 security-story work on `main`, in addition to the earlier v0.2.0 and v0.3.0 foundations.
+GhostWire now includes the released v0.4.0 security-story work, in addition to the earlier v0.2.0 and v0.3.0 foundations.
 
-### ✅ v0.4.0 Features (Implemented on `main`)
+### ✅ v0.4.0 Features
 
 1. **Safety Number Verification UI** - `/verify` and `/confirm` workflow for manual trust establishment
 2. **Self-Destruct Command** - `/expire <seconds> <message>` with TTL propagation across the wire

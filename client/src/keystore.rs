@@ -241,7 +241,7 @@ impl KeyStore {
 
         // Derive session keys
         let session_keys =
-            derive_session_keys(&self.ephemeral.secret, their_public, b"GhostWire v0.3.0")?;
+            derive_session_keys(&self.ephemeral.secret, their_public, b"GhostWire v0.4.0")?;
 
         // Derive send/recv chains with role differentiation.
         // The peer with the lexicographically smaller public key uses

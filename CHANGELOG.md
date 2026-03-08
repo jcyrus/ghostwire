@@ -7,14 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-08
+
+### Added
+
+- Safety-number verification commands with `/verify <username>` and `/confirm <username>`.
+- Self-destruct message sending via `/expire <seconds> <message>`.
+- Sender-key based group encryption for `group:*` channels.
+
+### Changed
+
+- Activated periodic 24-hour key rotation and automatic key re-broadcast.
+- Hardened encrypted DM handling with per-message ratchets and replay protection.
+- Refreshed release documentation to reflect the v0.4.0 security story shipping on `main`.
+
 ## [0.3.0] - 2025-12-09
 
 ### Added
 
 - **🔒 End-to-End Encryption (E2EE)**
-
   - **Cryptographic Stack**:
-
     - X25519 (ECDH) for key exchange
     - ChaCha20-Poly1305 (AEAD) for message encryption
     - Ed25519 for identity keys (signatures)
@@ -22,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - SHA-256 for safety number fingerprints
 
   - **Key Management**:
-
     - Automatic key exchange on connect
     - Ephemeral keys (in-memory only, never persisted)
     - 24-hour automatic key rotation (infrastructure ready)
@@ -30,7 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Implementation: `client/src/crypto.rs`, `client/src/keystore.rs`
 
   - **Message Encryption**:
-
     - Transparent encryption for DM messages
     - Automatic decryption on receive
     - Fallback to plaintext if no session exists
@@ -45,7 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Implementation: `client/src/app.rs`
 
 - **Security Audit Logging**
-
   - Comprehensive logging of all security events
   - Log location: `~/.config/ghostwire/security_audit.log`
   - Events logged:
@@ -57,7 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Implementation: `client/src/security_audit.rs`
 
 - **Self-Destructing Messages**
-
   - Message expiry with TTL (time-to-live)
   - Automatic cleanup every 5 seconds
   - Secure deletion with memory zeroing (`zeroize` crate)
@@ -65,7 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Implementation: `client/src/app.rs`
 
 - **Documentation**
-
   - Comprehensive security model documentation: `docs/SECURITY.md`
   - Threat model analysis
   - Best practices for users and developers
@@ -105,13 +112,11 @@ See `docs/SECURITY.md` for complete details.
 ### Added
 
 - **CLI Improvements**
-
   - Version flag: `ghostwire --version` displays current version
   - Enhanced help: `ghostwire --help` with usage examples and keyboard shortcuts
   - Implementation: `client/src/main.rs` using clap 4.4
 
 - **Network Enhancements**
-
   - Auto-reconnect with exponential backoff (1s → 16s, max 10 attempts)
   - Real-time latency tracking with ping/pong timestamps
   - Connection quality indicator in UI showing RTT in milliseconds
@@ -119,21 +124,18 @@ See `docs/SECURITY.md` for complete details.
   - Implementation: `client/src/network.rs`
 
 - **Configuration System**
-
   - Configuration file: `~/.config/ghostwire/config.toml`
   - Settings: default server URL, auto-reconnect, timestamp format, typing indicators, log retention
   - Uses confy crate for TOML management
   - Implementation: `client/src/config.rs`
 
 - **Logging System**
-
   - Daily rotating logs to `~/.config/ghostwire/logs/`
   - RUST_LOG environment variable support
   - File retention management
   - Implementation: `client/src/logging.rs`
 
 - **Enhanced UI Features**
-
   - Configurable timestamp formats: 24h, 12h, DateTime, Relative ("2m ago")
   - Scroll indicators: position counter, "↓ X more" badge, visual scroll bar
   - Typing indicators: Shows "username is typing..." below input
@@ -168,7 +170,6 @@ See `docs/SECURITY.md` for complete details.
 ### Fixed
 
 - **WebSocket Connection Stability**: Implemented bidirectional heartbeat mechanism to prevent connection timeouts
-
   - Implementation: `client/src/network.rs`, `server/src/relay.rs`
   - Impact: Connections now stay alive indefinitely during idle periods. Fixes "WebSocket protocol error: C" disconnections that occurred after 30-60 seconds of inactivity
   - Root Cause: Intermediate proxies and load balancers (including Shuttle's infrastructure) were timing out idle WebSocket connections due to lack of traffic
@@ -182,7 +183,6 @@ See `docs/SECURITY.md` for complete details.
 ### Added
 
 - **User Idle Status**: Users now display idle status when inactive for more than 5 minutes
-
   - Implementation: `client/src/app.rs`, `client/src/ui.rs`
   - Impact: Three-state presence system provides better awareness of user activity
   - Visual Indicators:
@@ -192,7 +192,6 @@ See `docs/SECURITY.md` for complete details.
   - Helps users identify who is actively chatting versus who is just connected
 
 - **Usage Documentation**: Added comprehensive usage section to README
-
   - Examples for connecting to default server, custom servers, and local development
   - Complete keyboard controls reference
   - Impact: Users now have clear instructions on how to use the client after installation
@@ -281,7 +280,8 @@ See `docs/SECURITY.md` for complete details.
 - No group channels yet (reserved for future)
 - Server broadcasts all messages to all clients (no server-side filtering)
 
-[Unreleased]: https://github.com/jcyrus/GhostWire/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/jcyrus/GhostWire/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jcyrus/GhostWire/compare/v0.3.2...v0.4.0
 [0.1.2]: https://github.com/jcyrus/GhostWire/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jcyrus/GhostWire/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jcyrus/GhostWire/releases/tag/v0.1.0

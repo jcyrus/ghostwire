@@ -2,7 +2,7 @@
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 
-**Current Version**: v0.3.0
+**Current Version**: v0.4.0
 **Last Updated**: 2026-03-08
 
 ---
@@ -57,13 +57,11 @@
 
 ---
 
-## 🚀 Next Release (v0.4.0)
+### v0.4.0 - Complete the Security Story
 
-**Theme**: Complete the Security Story
+**Released**: March 2026
 
 _Finishes what v0.3.0 started — every feature below has infrastructure already in place._
-
-**Implementation Status**: All scoped features are now implemented on `main` and pending release packaging.
 
 ### Complete v0.3.0 Infrastructure
 
