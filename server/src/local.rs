@@ -2,9 +2,11 @@
 // This binary is used for local development without Shuttle runtime
 
 mod relay;
+mod status_page;
 
 use axum::{
     extract::{ws::WebSocketUpgrade, State},
+    http::HeaderMap,
     response::{Html, IntoResponse},
     routing::get,
     Router,
@@ -21,57 +23,10 @@ async fn health_check() -> &'static str {
 }
 
 /// Root endpoint with server info
-async fn root(State(state): State<RelayState>) -> Html<String> {
+async fn root(State(state): State<RelayState>, headers: HeaderMap) -> Html<String> {
     let client_count = state.client_count().await;
-    
-    Html(format!(
-        r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>GhostWire Relay</title>
-    <style>
-        body {{
-            background: #000;
-            color: #0f0;
-            font-family: 'Courier New', monospace;
-            padding: 2rem;
-            max-width: 800px;
-            margin: 0 auto;
-        }}
-        h1 {{ color: #0f0; text-shadow: 0 0 10px #0f0; }}
-        .status {{ color: #0f0; }}
-        .info {{ color: #0a0; margin: 1rem 0; }}
-        pre {{ background: #111; padding: 1rem; border: 1px solid #0f0; }}
-        a {{ color: #0ff; }}
-    </style>
-</head>
-<body>
-    <h1>👻 GhostWire Relay (Local)</h1>
-    <div class="status">STATUS: ONLINE</div>
-    <div class="info">
-        <p>Connected Clients: {}</p>
-        <p>WebSocket Endpoint: <code>ws://localhost:8080/ws</code></p>
-    </div>
-    <h2>Protocol</h2>
-    <pre>{{
-  "type": "MSG" | "AUTH" | "SYS",
-  "payload": "...",
-  "meta": {{
-    "sender": "...",
-    "timestamp": 1234567890
-  }}
-}}</pre>
-    <h2>Philosophy</h2>
-    <p>This server is intentionally "dumb" - it relays messages without reading them.</p>
-    <p>All security is client-side. The server knows nothing.</p>
-    <hr>
-    <p><a href="https://github.com/jcyrus/GhostWire">GitHub</a> | <a href="/health">Health Check</a></p>
-</body>
-</html>
-        "#,
-        client_count
-    ))
+
+    Html(status_page::render(client_count, &headers, true))
 }
 
 /// WebSocket upgrade handler

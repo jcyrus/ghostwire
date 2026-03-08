@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-08
+
+### Fixed
+
+- Direct-message session bootstrap now recovers from staggered client connects by re-sending targeted key exchange messages when a peer joins, preventing one-way encrypted DM failures.
+- DM recipient parsing now correctly resolves the peer from `dm:user1:user2` channel IDs instead of treating the `dm` prefix as a username.
+- Hosted relay status pages now derive the public WebSocket endpoint from forwarded request headers, so Fly/custom-domain pages show the correct `wss://.../ws` address.
+
 ## [0.5.0] - 2026-03-08
 
 ### Added

@@ -5,13 +5,13 @@ use crate::app::{MessageMeta, MessageType, WireMessage};
 use crate::crypto::{decrypt_message, encrypt_message};
 use crate::keystore::KeyStore;
 use crate::security_audit::{SecurityAuditLogger, SecurityEvent};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[derive(Debug, Clone)]
@@ -132,6 +132,58 @@ pub enum NetworkCommand {
 
     /// Disconnect from server
     Disconnect,
+}
+
+fn dm_recipient_from_channel(channel_id: &str, local_username: &str) -> Option<String> {
+    let mut parts = channel_id.split(':');
+
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("dm"), Some(first_user), Some(second_user), None) => {
+            if first_user == local_username && second_user != local_username {
+                Some(second_user.to_string())
+            } else if second_user == local_username && first_user != local_username {
+                Some(first_user.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn build_key_exchange_message(
+    username: &str,
+    public_key_b64: String,
+    recipient: Option<String>,
+) -> WireMessage {
+    WireMessage {
+        msg_type: MessageType::KeyExchange,
+        payload: public_key_b64,
+        channel: "global".to_string(),
+        meta: MessageMeta {
+            sender: username.to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+        },
+        is_typing: false,
+        encrypted: false,
+        recipient,
+        ttl: None,
+        action: false,
+        message_id: None,
+        reaction_to: None,
+        reaction_emoji: None,
+    }
+}
+
+fn key_exchange_recipient_for_incoming(
+    wire_msg: &WireMessage,
+    local_username: &str,
+) -> Option<String> {
+    if matches!(wire_msg.msg_type, MessageType::Auth) && wire_msg.meta.sender != local_username {
+        Some(wire_msg.meta.sender.clone())
+    } else {
+        None
+    }
 }
 
 /// Network task that runs in a separate tokio runtime
@@ -261,23 +313,7 @@ pub async fn network_task(
             let store = keystore.lock().unwrap();
             store.get_our_public_key()
         };
-        let key_exchange_msg = WireMessage {
-            msg_type: MessageType::KeyExchange,
-            payload: our_public_key.clone(),
-            channel: "global".to_string(),
-            meta: MessageMeta {
-                sender: username.clone(),
-                timestamp: chrono::Utc::now().timestamp(),
-            },
-            is_typing: false,
-            encrypted: false,
-            recipient: None,
-            ttl: None,
-            action: false,
-            message_id: None,
-            reaction_to: None,
-            reaction_emoji: None,
-        };
+        let key_exchange_msg = build_key_exchange_message(&username, our_public_key.clone(), None);
 
         if let Ok(json) = serde_json::to_string(&key_exchange_msg)
             && let Err(e) = write.send(Message::Text(json.into())).await
@@ -329,6 +365,34 @@ pub async fn network_task(
                         Ok(Message::Text(text)) => {
                             // Parse the wire message
                             if let Ok(wire_msg) = serde_json::from_str::<WireMessage>(&text) {
+                                // Re-broadcast our key directly to newly connected peers.
+                                // This fixes staggered connect ordering where a peer misses our
+                                // initial broadcast key exchange sent before they joined.
+                                if let Some(recipient) =
+                                    key_exchange_recipient_for_incoming(&wire_msg, &username)
+                                {
+                                    let our_public_key = {
+                                        let store = keystore.lock().unwrap();
+                                        store.get_our_public_key()
+                                    };
+
+                                    let targeted_key_exchange = build_key_exchange_message(
+                                        &username,
+                                        our_public_key,
+                                        Some(recipient.clone()),
+                                    );
+
+                                    if let Ok(json) = serde_json::to_string(&targeted_key_exchange)
+                                        && let Err(e) = write.send(Message::Text(json.into())).await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to send targeted key exchange to {}: {}",
+                                            recipient,
+                                            e
+                                        );
+                                    }
+                                }
+
                                 handle_wire_message(
                                     wire_msg,
                                     &event_tx,
@@ -389,14 +453,7 @@ pub async fn network_task(
                             let mut pending_group_commit: Option<String> = None;
 
                             // Determine recipient from channel_id (dm:user1:user2)
-                            let recipient = if channel_id.starts_with("dm:") {
-                                let parts: Vec<&str> = channel_id.split(':').collect();
-                                parts.iter()
-                                    .find(|&&u| u != username)
-                                    .map(|&u| u.to_string())
-                            } else {
-                                None
-                            };
+                            let recipient = dm_recipient_from_channel(&channel_id, &username);
 
                             // Encrypt direct messages with pairwise session keys.
                             // Encrypt group messages with per-group sender keys.
@@ -651,23 +708,8 @@ pub async fn network_task(
                                     store.get_our_public_key()
                                 };
 
-                                let msg = WireMessage {
-                                    msg_type: MessageType::KeyExchange,
-                                    payload: public_key.clone(),
-                                    channel: "global".to_string(),
-                                    meta: MessageMeta {
-                                        sender: username.clone(),
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                    },
-                                    is_typing: false,
-                                    encrypted: false,
-                                    recipient: None,
-                                    ttl: None,
-                                    action: false,
-                                    message_id: None,
-                                    reaction_to: None,
-                                    reaction_emoji: None,
-                                };
+                                let msg =
+                                    build_key_exchange_message(&username, public_key.clone(), None);
 
                                 if let Ok(json) = serde_json::to_string(&msg) {
                                     let _ = write.send(Message::Text(json.into())).await;
@@ -888,16 +930,14 @@ fn handle_wire_message(
                             let mut nonce = [0u8; 12];
                             nonce.copy_from_slice(&payload_bytes[..12]);
                             if session.nonce_seen(&nonce) {
-                                tracing::warn!(
-                                    "Replay attack detected from {}",
-                                    msg.meta.sender
-                                );
-                                audit_logger.lock().unwrap().log(
-                                    SecurityEvent::ReplayDetected {
+                                tracing::warn!("Replay attack detected from {}", msg.meta.sender);
+                                audit_logger
+                                    .lock()
+                                    .unwrap()
+                                    .log(SecurityEvent::ReplayDetected {
                                         sender: msg.meta.sender.clone(),
                                         nonce: hex::encode(nonce),
-                                    },
-                                );
+                                    });
                                 return;
                             }
                             extracted_nonce = Some(nonce);
@@ -1142,4 +1182,100 @@ fn format_session_fingerprint(our_pub_bytes: [u8; 32], their_pub_bytes: [u8; 32]
         .map(|c| std::str::from_utf8(c).unwrap_or(""))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dm_recipient_from_channel, key_exchange_recipient_for_incoming};
+    use crate::app::{MessageMeta, MessageType, WireMessage};
+
+    fn mock_wire_message(msg_type: MessageType, sender: &str) -> WireMessage {
+        WireMessage {
+            msg_type,
+            payload: String::new(),
+            channel: "global".to_string(),
+            meta: MessageMeta {
+                sender: sender.to_string(),
+                timestamp: 0,
+            },
+            is_typing: false,
+            encrypted: false,
+            recipient: None,
+            ttl: None,
+            action: false,
+            message_id: None,
+            reaction_to: None,
+            reaction_emoji: None,
+        }
+    }
+
+    #[test]
+    fn dm_recipient_skips_prefix_and_picks_other_user() {
+        assert_eq!(
+            dm_recipient_from_channel("dm:alice:bob", "alice"),
+            Some("bob".to_string())
+        );
+        assert_eq!(
+            dm_recipient_from_channel("dm:alice:bob", "bob"),
+            Some("alice".to_string())
+        );
+    }
+
+    #[test]
+    fn dm_recipient_rejects_invalid_channel_shapes() {
+        assert_eq!(dm_recipient_from_channel("global", "alice"), None);
+        assert_eq!(dm_recipient_from_channel("dm:alice", "alice"), None);
+        assert_eq!(dm_recipient_from_channel("dm:alice:alice", "alice"), None);
+    }
+
+    #[test]
+    fn targeted_key_exchange_only_for_other_users_auth() {
+        let local_username = "alice";
+
+        assert_eq!(
+            key_exchange_recipient_for_incoming(
+                &mock_wire_message(MessageType::Auth, "alice"),
+                local_username,
+            ),
+            None
+        );
+
+        assert_eq!(
+            key_exchange_recipient_for_incoming(
+                &mock_wire_message(MessageType::Auth, "bob"),
+                local_username,
+            ),
+            Some("bob".to_string())
+        );
+
+        assert_eq!(
+            key_exchange_recipient_for_incoming(
+                &mock_wire_message(MessageType::Message, "bob"),
+                local_username,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn staggered_join_sequence_triggers_rekey_for_late_peer() {
+        let local_username = "alice";
+
+        // Simulate a typical staggered timeline observed in production:
+        // 1) Alice's own AUTH is observed
+        // 2) Bob joins later with AUTH
+        // 3) Bob sends normal messages
+        let incoming = [
+            mock_wire_message(MessageType::Auth, "alice"),
+            mock_wire_message(MessageType::Auth, "bob"),
+            mock_wire_message(MessageType::Message, "bob"),
+        ];
+
+        let recipients: Vec<String> = incoming
+            .iter()
+            .filter_map(|msg| key_exchange_recipient_for_incoming(msg, local_username))
+            .collect();
+
+        assert_eq!(recipients, vec!["bob".to_string()]);
+    }
 }
