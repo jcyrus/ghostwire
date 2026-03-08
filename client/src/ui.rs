@@ -3,29 +3,42 @@
 
 use crate::app::{App, InputMode};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Gauge, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
     Frame,
 };
+use std::hash::{Hash, Hasher};
 
 /// Main UI render function
 pub fn render(f: &mut Frame, app: &App) {
     // Create the main layout: Left sidebar | Middle chat | Right sidebar
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
+    let constraints = if app.show_telemetry {
+        [
             Constraint::Percentage(20), // Left: Channels
             Constraint::Percentage(60), // Middle: Chat
             Constraint::Percentage(20), // Right: Telemetry
-        ])
+        ]
+    } else {
+        [
+            Constraint::Percentage(20), // Left: Channels
+            Constraint::Percentage(80), // Middle: Chat (expanded)
+            Constraint::Length(0),      // Right: Telemetry hidden
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
         .split(f.area());
 
     // Render each section
     render_channel_list(f, app, chunks[0]);
     render_chat_area(f, app, chunks[1]);
-    render_telemetry(f, app, chunks[2]);
+    if app.show_telemetry {
+        render_telemetry(f, app, chunks[2]);
+    }
 }
 
 /// Render the channel list (left sidebar)
@@ -179,19 +192,19 @@ fn render_users(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render the chat area (middle section)
 fn render_chat_area(f: &mut Frame, app: &App, area: Rect) {
-    // Split chat area into messages and input with typing indicator
+    // Split chat area into messages and a single footer so the bordered input
+    // panel aligns with the sidebars at the bottom edge.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(5),    // Chat messages (at least 5 lines)
-            Constraint::Length(3), // Input box
-            Constraint::Length(1), // Typing indicator
+            Constraint::Length(4), // Input footer with inline status/hints
         ])
         .split(area);
 
     render_messages(f, app, chunks[0]);
     render_input_box(f, app, chunks[1]);
-    render_typing_indicator(f, app, chunks[2]);
+    render_typing_indicator(f, app, chunks[1]);
 }
 
 /// Render chat messages
@@ -255,50 +268,114 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
                         })
                         .collect::<Vec<_>>()
                 } else {
-                    // Regular messages
-                    let sender_style = if msg.sender == app.username {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
+                    // Action messages (/me)
+                    if msg.is_action {
+                        let prefix = format!("[{}] * {} ", timestamp, msg.sender);
+                        let prefix_len = prefix.chars().count();
+                        let content_width = available_width.saturating_sub(prefix_len);
+                        let wrapped_lines = wrap_message_content(&msg.content, content_width);
+                        let action_style = Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::ITALIC);
+
+                        let mut items = wrapped_lines
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, line)| {
+                                if i == 0 {
+                                    ListItem::new(Line::from(vec![
+                                        Span::styled(
+                                            format!("[{}] ", timestamp),
+                                            Style::default().fg(Color::DarkGray),
+                                        ),
+                                        Span::styled(format!("* {} ", msg.sender), action_style),
+                                        Span::styled(line, action_style),
+                                    ]))
+                                } else {
+                                    let indent = " ".repeat(prefix_len);
+                                    ListItem::new(Line::from(vec![
+                                        Span::raw(indent),
+                                        Span::styled(line, action_style),
+                                    ]))
+                                }
+                            })
+                            .collect::<Vec<_>>();
+
+                        if !msg.reactions.is_empty() {
+                            let reaction_text = format_reaction_summary(msg);
+                            let indent = " ".repeat(prefix_len);
+                            items.push(ListItem::new(Line::from(vec![
+                                Span::raw(indent),
+                                Span::styled(reaction_text, Style::default().fg(Color::Cyan)),
+                            ])));
+                        }
+
+                        items
                     } else {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                    };
+                        // Regular messages
+                        let sender_style = if msg.sender == app.username {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            let sender_color = app
+                                .peer_public_key(&msg.sender)
+                                .map(|bytes| username_color_from_key(&bytes))
+                                .unwrap_or_else(|| username_color_from_username(&msg.sender));
 
-                    // Add lock icon for encrypted messages (v0.3.0)
-                    let lock_icon = if msg.encrypted { "🔒 " } else { "" };
-                    let prefix = format!("[{}] {}{}: ", timestamp, lock_icon, msg.sender);
-                    let prefix_len = prefix.chars().count();
-                    let content_width = available_width.saturating_sub(prefix_len);
+                            Style::default()
+                                .fg(sender_color)
+                                .add_modifier(Modifier::BOLD)
+                        };
 
-                    // Wrap message content
-                    let wrapped_lines = wrap_message_content(&msg.content, content_width);
+                        // Add lock icon for encrypted messages (v0.3.0)
+                        let lock_icon = if msg.encrypted { "🔒 " } else { "" };
+                        let prefix = format!("[{}] {}{}: ", timestamp, lock_icon, msg.sender);
+                        let prefix_len = prefix.chars().count();
+                        let content_width = available_width.saturating_sub(prefix_len);
 
-                    wrapped_lines
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, line)| {
-                            if i == 0 {
-                                // First line with full prefix
-                                ListItem::new(Line::from(vec![
-                                    Span::styled(
-                                        format!("[{}] ", timestamp),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                    Span::styled(format!("{}: ", msg.sender), sender_style),
-                                    Span::styled(line, Style::default().fg(Color::White)),
-                                ]))
-                            } else {
-                                // Continuation lines with indent
-                                let indent = " ".repeat(prefix_len);
-                                ListItem::new(Line::from(vec![
-                                    Span::raw(indent),
-                                    Span::styled(line, Style::default().fg(Color::White)),
-                                ]))
-                            }
-                        })
-                        .collect::<Vec<_>>()
+                        // Render markdown/code blocks and then wrap into display lines.
+                        let rendered_lines =
+                            render_message_content_lines(&msg.content, content_width);
+
+                        let mut items = rendered_lines
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, spans)| {
+                                if i == 0 {
+                                    // First line with full prefix
+                                    let mut full_spans = vec![
+                                        Span::styled(
+                                            format!("[{}] ", timestamp),
+                                            Style::default().fg(Color::DarkGray),
+                                        ),
+                                        Span::styled(format!("{}: ", msg.sender), sender_style),
+                                    ];
+                                    full_spans.extend(spans);
+
+                                    ListItem::new(Line::from(full_spans))
+                                } else {
+                                    // Continuation lines with indent
+                                    let indent = " ".repeat(prefix_len);
+                                    let mut full_spans = vec![Span::raw(indent)];
+                                    full_spans.extend(spans);
+
+                                    ListItem::new(Line::from(full_spans))
+                                }
+                            })
+                            .collect::<Vec<_>>();
+
+                        if !msg.reactions.is_empty() {
+                            let reaction_text = format_reaction_summary(msg);
+                            let indent = " ".repeat(prefix_len);
+                            items.push(ListItem::new(Line::from(vec![
+                                Span::raw(indent),
+                                Span::styled(reaction_text, Style::default().fg(Color::Cyan)),
+                            ])));
+                        }
+
+                        items
+                    }
                 }
             })
             .collect()
@@ -376,6 +453,8 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     };
 
     // Slice messages to show only the visible window starting from scroll_offset
+    // When there are fewer messages than visible lines, pad the top with empty
+    // items so messages stick to the bottom of the panel.
     let visible_messages: Vec<ListItem> = if total_items > visible_lines {
         messages
             .into_iter()
@@ -383,7 +462,10 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
             .take(visible_lines)
             .collect()
     } else {
-        messages
+        let padding = visible_lines.saturating_sub(total_items);
+        let mut padded: Vec<ListItem> = (0..padding).map(|_| ListItem::new("")).collect();
+        padded.extend(messages);
+        padded
     };
 
     let messages_list = List::new(visible_messages)
@@ -427,16 +509,192 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+/// Render message text with lightweight markdown and fenced code block support.
+fn render_message_content_lines(text: &str, max_width: usize) -> Vec<Vec<Span<'static>>> {
+    if max_width == 0 {
+        return vec![vec![Span::styled(
+            text.to_string(),
+            Style::default().fg(Color::White),
+        )]];
+    }
+
+    let code_style = Style::default().fg(Color::Green).bg(Color::Rgb(30, 30, 30));
+    let quote_style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::ITALIC);
+
+    let mut lines: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut in_code_block = false;
+
+    for raw_line in text.split('\n') {
+        let trimmed = raw_line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+
+        if in_code_block {
+            for wrapped in wrap_message_content(raw_line, max_width) {
+                lines.push(vec![Span::styled(wrapped, code_style)]);
+            }
+            continue;
+        }
+
+        if trimmed.starts_with('>') {
+            let quoted = trimmed.strip_prefix('>').unwrap_or(trimmed).trim_start();
+            for wrapped in wrap_message_content(quoted, max_width.saturating_sub(2)) {
+                lines.push(vec![Span::styled(format!("│ {}", wrapped), quote_style)]);
+            }
+            continue;
+        }
+
+        for wrapped in wrap_message_content(raw_line, max_width) {
+            lines.push(parse_inline_markdown(&wrapped));
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(vec![Span::styled(
+            String::new(),
+            Style::default().fg(Color::White),
+        )]);
+    }
+
+    lines
+}
+
+/// Parse a subset of markdown inline syntax into styled spans.
+/// Supported: **bold**, *italic* / _italic_, and `inline code`.
+fn parse_inline_markdown(input: &str) -> Vec<Span<'static>> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+
+    let flush_plain = |plain: &mut String, spans: &mut Vec<Span<'static>>| {
+        if !plain.is_empty() {
+            spans.push(Span::styled(
+                std::mem::take(plain),
+                Style::default().fg(Color::White),
+            ));
+        }
+    };
+
+    while i < chars.len() {
+        if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = find_closing_double_star(&chars, i + 2) {
+                flush_plain(&mut plain, &mut spans);
+                let bold_text: String = chars[i + 2..end].iter().collect();
+                spans.push(Span::styled(
+                    bold_text,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                i = end + 2;
+                continue;
+            }
+        }
+
+        if chars[i] == '`' {
+            if let Some(end) = find_closing_char(&chars, i + 1, '`') {
+                flush_plain(&mut plain, &mut spans);
+                let code_text: String = chars[i + 1..end].iter().collect();
+                spans.push(Span::styled(
+                    code_text,
+                    Style::default().fg(Color::Green).bg(Color::DarkGray),
+                ));
+                i = end + 1;
+                continue;
+            }
+        }
+
+        if chars[i] == '*' || chars[i] == '_' {
+            let marker = chars[i];
+            if let Some(end) = find_closing_char(&chars, i + 1, marker) {
+                flush_plain(&mut plain, &mut spans);
+                let italic_text: String = chars[i + 1..end].iter().collect();
+                spans.push(Span::styled(
+                    italic_text,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+                i = end + 1;
+                continue;
+            }
+        }
+
+        plain.push(chars[i]);
+        i += 1;
+    }
+
+    flush_plain(&mut plain, &mut spans);
+
+    if spans.is_empty() {
+        spans.push(Span::styled(
+            String::new(),
+            Style::default().fg(Color::White),
+        ));
+    }
+
+    spans
+}
+
+fn find_closing_char(chars: &[char], start: usize, marker: char) -> Option<usize> {
+    (start..chars.len()).find(|&idx| chars[idx] == marker)
+}
+
+fn find_closing_double_star(chars: &[char], start: usize) -> Option<usize> {
+    let mut idx = start;
+    while idx + 1 < chars.len() {
+        if chars[idx] == '*' && chars[idx + 1] == '*' {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn format_reaction_summary(msg: &crate::app::ChatMessage) -> String {
+    let summary = msg.reaction_summary();
+    summary
+        .iter()
+        .map(|(emoji, count)| format!("{} {}", emoji, count))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
 /// Render input box only
 fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
     let input_style = match app.input_mode {
         InputMode::Normal => Style::default().fg(Color::Green),
         InputMode::Editing => Style::default().fg(Color::Yellow),
+        InputMode::Command => Style::default().fg(Color::Cyan),
     };
 
     let mode_indicator = match app.input_mode {
-        InputMode::Normal => " [NORMAL] ",
-        InputMode::Editing => " [EDIT] ",
+        InputMode::Normal => {
+            if app.show_telemetry {
+                " [NORMAL | F10: Focus] "
+            } else {
+                " [NORMAL | F10: Telemetry] "
+            }
+        }
+        InputMode::Editing => {
+            if app.show_telemetry {
+                " [EDIT | F10: Focus] "
+            } else {
+                " [EDIT | F10: Telemetry] "
+            }
+        }
+        InputMode::Command => {
+            if app.show_telemetry {
+                " [COMMAND | F10: Focus] "
+            } else {
+                " [COMMAND | F10: Telemetry] "
+            }
+        }
     };
 
     // Wrap text if it's too long
@@ -457,7 +715,7 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(input, area);
 
     // Show cursor in edit mode
-    if app.input_mode == InputMode::Editing {
+    if app.input_mode == InputMode::Editing || app.input_mode == InputMode::Command {
         // Calculate cursor position with wrapping
         let lines_before = app.input[..app.input_cursor.min(app.input.len())]
             .chars()
@@ -478,6 +736,28 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
 
 /// Render typing indicator
 fn render_typing_indicator(f: &mut Frame, app: &App, area: Rect) {
+    if area.height < 3 || area.width < 3 {
+        return;
+    }
+
+    let indicator_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+
+    if app.input_mode == InputMode::Command {
+        let hint = command_hint_line(&app.input);
+        let hint_widget = Paragraph::new(hint).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::ITALIC),
+        );
+        f.render_widget(hint_widget, indicator_area);
+        return;
+    }
+
     let typing_users = app.get_typing_users();
     if !typing_users.is_empty() {
         let typing_text = if typing_users.len() == 1 {
@@ -498,47 +778,52 @@ fn render_typing_indicator(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::ITALIC),
         );
 
-        f.render_widget(typing_indicator, area);
+        f.render_widget(typing_indicator, indicator_area);
+    }
+}
+
+fn command_hint_line(input: &str) -> String {
+    const COMMANDS: [(&str, &str); 6] = [
+        ("/verify", "/verify <username>"),
+        ("/confirm", "/confirm <username>"),
+        ("/groupkey", "/groupkey <group> <user1,user2,...>"),
+        ("/expire", "/expire <seconds> <message>"),
+        ("/me", "/me <action>"),
+        ("/react", "/react <emoji> OR /react <message_id> <emoji>"),
+    ];
+
+    if input.is_empty() || input == "/" {
+        return "Commands: /verify  /confirm  /groupkey  /expire  /me  /react".to_string();
+    }
+
+    let query = input.to_lowercase();
+    if let Some((name, usage)) = COMMANDS
+        .iter()
+        .find(|(name, _)| name.starts_with(&query))
+        .copied()
+    {
+        format!("{} -> {}", name, usage)
+    } else {
+        format!("Unknown command: {}", input)
     }
 }
 
 /// Render telemetry (right sidebar)
 fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
-    // Split telemetry area into sections
+    // Split into compact activity summary + commands reference
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Connection uptime
-            Constraint::Length(3), // Latency
-            Constraint::Length(4), // Performance (FPS + Memory)
-            Constraint::Length(7), // Statistics (expanded)
-            Constraint::Min(3),    // Network activity chart
-            Constraint::Length(3), // Server time
+            Constraint::Length(6), // Compact activity summary
+            Constraint::Min(10),   // Commands reference
         ])
         .split(area);
 
-    // Connection uptime
+    // --- Compact activity summary ---
     let uptime_hours = app.telemetry.connection_uptime / 3600;
     let uptime_mins = (app.telemetry.connection_uptime % 3600) / 60;
     let uptime_secs = app.telemetry.connection_uptime % 60;
 
-    let uptime = Paragraph::new(format!(
-        "{}h {}m {}s",
-        uptime_hours, uptime_mins, uptime_secs
-    ))
-    .style(Style::default().fg(Color::Green))
-    .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .title(" Uptime ")
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Green)),
-    );
-    f.render_widget(uptime, chunks[0]);
-
-    // Latency gauge
-    let latency_percent = (app.telemetry.latency_ms.min(500) as f64 / 500.0 * 100.0) as u16;
     let latency_color = if app.telemetry.latency_ms < 50 {
         Color::Green
     } else if app.telemetry.latency_ms < 150 {
@@ -547,114 +832,172 @@ fn render_telemetry(f: &mut Frame, app: &App, area: Rect) {
         Color::Red
     };
 
-    let latency = Gauge::default()
-        .block(
-            Block::default()
-                .title(format!(" Latency: {}ms ", app.telemetry.latency_ms))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        )
-        .gauge_style(Style::default().fg(latency_color))
-        .percent(latency_percent);
-    f.render_widget(latency, chunks[1]);
-
-    // Performance metrics (FPS and Memory)
-    let memory_mb = app.telemetry.memory_usage as f64 / 1024.0 / 1024.0;
-    let fps_color = if app.telemetry.fps >= 30.0 {
-        Color::Green
-    } else if app.telemetry.fps >= 15.0 {
-        Color::Yellow
-    } else {
-        Color::Red
-    };
-
-    let performance_text = format!("FPS: {:.1}\nMem: {:.1} MB", app.telemetry.fps, memory_mb);
-
-    let performance = Paragraph::new(performance_text)
-        .style(Style::default().fg(fps_color))
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .title(" Performance ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        );
-    f.render_widget(performance, chunks[2]);
-
-    // Expanded statistics
-    let active_channel_name = app
-        .channels
-        .get(&app.active_channel)
-        .map(|ch| ch.display_name())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    let stats_text = format!(
-        "↑ Sent: {}\n↓ Recv: {}\n📊 Bytes: {} / {}\n📺 Channel: {}\n👥 Users: {} | Channels: {}",
-        app.telemetry.messages_sent,
-        app.telemetry.messages_received,
-        format_bytes(app.telemetry.bytes_sent),
-        format_bytes(app.telemetry.bytes_received),
-        active_channel_name,
-        app.users.len(),
-        app.channels.len(),
-    );
-
-    let stats = Paragraph::new(stats_text)
-        .style(Style::default().fg(Color::Green))
-        .block(
-            Block::default()
-                .title(" Statistics ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        );
-    f.render_widget(stats, chunks[3]);
-
-    // Compact network activity chart using Braille sparkline
-    let activity_data: Vec<u64> = app.telemetry.network_activity.clone();
-    let max_activity = *activity_data.iter().max().unwrap_or(&1).max(&1);
-
-    // Take last 30 data points for sparkline
-    let recent_data: Vec<u64> = activity_data.iter().rev().take(30).rev().copied().collect();
-
-    let sparkline_text = create_sparkline(&recent_data, max_activity);
-    let title = format!(" Activity (max: {}/s) ", max_activity);
-
-    let activity_chart = Paragraph::new(sparkline_text)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        )
-        .style(Style::default().fg(Color::Green))
-        .alignment(Alignment::Left);
-
-    f.render_widget(activity_chart, chunks[4]);
-
-    // Server time
     use chrono::Utc;
     let now = Utc::now();
-    let time_str = now.format("%H:%M:%S UTC").to_string();
 
-    let time_widget = Paragraph::new(time_str)
-        .style(
+    let summary_text = vec![
+        Line::from(vec![
+            Span::styled(" ⏱ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}h{}m{}s", uptime_hours, uptime_mins, uptime_secs),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled("  ⏎ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}ms", app.telemetry.latency_ms),
+                Style::default().fg(latency_color),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" ↑ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format_bytes(app.telemetry.bytes_sent),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled("  ↓ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format_bytes(app.telemetry.bytes_received),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" 📨 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "{}/{}",
+                    app.telemetry.messages_sent, app.telemetry.messages_received
+                ),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled("  🕐 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                now.format("%H:%M UTC").to_string(),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+    ];
+
+    let summary = Paragraph::new(summary_text).block(
+        Block::default()
+            .title(" Activity ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Green)),
+    );
+    f.render_widget(summary, chunks[0]);
+
+    // --- Commands reference ---
+    let commands_text = vec![
+        Line::from(Span::styled(
+            "── Normal Mode ──",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        )
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .title(" Server Time ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Green)),
-        );
-    f.render_widget(time_widget, chunks[5]);
+        )),
+        Line::from(vec![
+            Span::styled(" i/Enter ", Style::default().fg(Color::Cyan)),
+            Span::styled("Edit mode", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" q/Esc   ", Style::default().fg(Color::Cyan)),
+            Span::styled("Quit", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" j/k ↑↓  ", Style::default().fg(Color::Cyan)),
+            Span::styled("Scroll chat", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" PgUp/Dn ", Style::default().fg(Color::Cyan)),
+            Span::styled("Page scroll", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" g/G     ", Style::default().fg(Color::Cyan)),
+            Span::styled("Top / Bottom", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" h/l ←→  ", Style::default().fg(Color::Cyan)),
+            Span::styled("Prev/Next channel", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Tab     ", Style::default().fg(Color::Cyan)),
+            Span::styled("Activate channel", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" #       ", Style::default().fg(Color::Cyan)),
+            Span::styled("Global channel", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" J/K     ", Style::default().fg(Color::Cyan)),
+            Span::styled("Select user", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" d       ", Style::default().fg(Color::Cyan)),
+            Span::styled("DM selected user", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" r       ", Style::default().fg(Color::Cyan)),
+            Span::styled("Quick react", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(" F10     ", Style::default().fg(Color::Cyan)),
+            Span::styled("Toggle focus", Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "── Commands ──",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(" /me ", Style::default().fg(Color::Cyan)),
+            Span::styled("<action>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" /react ", Style::default().fg(Color::Cyan)),
+            Span::styled("<emoji>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" /verify ", Style::default().fg(Color::Cyan)),
+            Span::styled("<user>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" /confirm ", Style::default().fg(Color::Cyan)),
+            Span::styled("<user>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" /groupkey ", Style::default().fg(Color::Cyan)),
+            Span::styled("<grp> <u,u>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" /expire ", Style::default().fg(Color::Cyan)),
+            Span::styled("<secs> <msg>", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "── Markdown ──",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(" **bold** ", Style::default().fg(Color::Cyan)),
+            Span::styled(" *italic* ", Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled(" `code`  ", Style::default().fg(Color::Cyan)),
+            Span::styled(" > quote ", Style::default().fg(Color::Cyan)),
+        ]),
+    ];
+
+    let commands = Paragraph::new(commands_text).block(
+        Block::default()
+            .title(" Reference ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Green)),
+    );
+    f.render_widget(commands, chunks[1]);
 }
 
 /// Render a vertical scroll bar indicator
@@ -819,21 +1162,29 @@ fn wrap_message_content(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-/// Create a sparkline visualization using Braille characters
-fn create_sparkline(data: &[u64], max_value: u64) -> String {
-    // Braille characters for 9 levels (0-8)
-    const BRAILLE_CHARS: [&str; 9] = [" ", "⡀", "⡄", "⡆", "⡇", "⣇", "⣧", "⣷", "⣿"];
+/// Derive a deterministic username color from the first 3 bytes of a public key.
+fn username_color_from_key(public_key: &[u8; 32]) -> Color {
+    let mut r = public_key[0];
+    let mut g = public_key[1];
+    let mut b = public_key[2];
 
-    if data.is_empty() || max_value == 0 {
-        return " ".repeat(30);
-    }
+    // Keep colors readable on dark backgrounds.
+    let min_channel = 80;
+    r = r.max(min_channel);
+    g = g.max(min_channel);
+    b = b.max(min_channel);
 
-    data.iter()
-        .map(|&value| {
-            // Normalize to 0-8 range
-            let normalized = ((value as f64 / max_value as f64) * 8.0).round() as usize;
-            let index = normalized.min(8);
-            BRAILLE_CHARS[index]
-        })
-        .collect()
+    Color::Rgb(r, g, b)
+}
+
+/// Fallback deterministic color when a peer key is unavailable.
+fn username_color_from_username(username: &str) -> Color {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    username.hash(&mut hasher);
+    let hash = hasher.finish().to_le_bytes();
+
+    let r = hash[0].max(80);
+    let g = hash[1].max(80);
+    let b = hash[2].max(80);
+    Color::Rgb(r, g, b)
 }

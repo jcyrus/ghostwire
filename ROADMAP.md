@@ -77,7 +77,7 @@ _Finishes what v0.3.0 started — every feature below has infrastructure already
 
 ---
 
-## 💬 Rich Messaging (v0.5.0)
+## 💬 Rich Messaging & UI/UX Evolution (v0.5.0)
 
 **Theme**: Expressive Terminal Communication
 
@@ -85,9 +85,16 @@ _Finishes what v0.3.0 started — every feature below has infrastructure already
 
 - [ ] **Code Blocks** - Syntax-highlighted code snippets in chat
 - [ ] **Markdown Support** - Bold, italic, inline code, block quotes
+- [ ] **Action Commands** - Support for the classic IRC `/me` command with unique italicized visual rendering
 - [ ] **Reactions** - Emoji reactions to messages
 - [ ] **Message Editing** - Edit a sent message within a time window
 - [ ] **Message Threading** - Reply to a specific message (UUIDs already on `ChatMessage`)
+
+### UI/UX
+
+- [ ] **Procedural User Colors** - Generate unique, consistent colors for usernames based on their cryptographic identity
+- [ ] **Command Palette** - A dedicated input mode for `/` commands to separate them from standard chat
+- [ ] **Focus Mode** - A keyboard toggle (`F10`) to collapse the telemetry sidebar for a wider chat view
 
 ### Discovery & History
 
@@ -97,15 +104,20 @@ _Finishes what v0.3.0 started — every feature below has infrastructure already
 
 ---
 
-## 👥 Groups & Presence (v0.6.0)
+## 👥 Groups & the IRC Era (v0.6.0)
 
-**Theme**: Multi-User Collaboration
+**Theme**: Multi-User Collaboration Meets Classic IRC
 
 ### Group Channels
 
+- [ ] **Classic IRC Routing** - Implement `/join #channel` and `/invite @user` workflows
 - [ ] **Named Group Channels** - Multi-user group chats beyond global
-- [ ] **Group Permissions** - Admin, moderator, member roles
+- [ ] **Decentralized Channel Operators** - Implement the `@` status for channel creators, with local `/kick` and `/ban` capabilities (enforced client-side via ignore lists)
 - [ ] **Group Invites** - Shareable invite links for groups
+
+### Peer-to-Peer
+
+- [ ] **Direct Client-to-Client (DCC)** - P2P encrypted file transfers that bypass the relay server's standard message broadcast
 
 ### Enhanced Presence
 

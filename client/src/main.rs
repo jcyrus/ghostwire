@@ -256,14 +256,24 @@ fn handle_key_event(
                     }
                 }
 
+                // Quick react: open command mode prefilled with /react
+                KeyCode::Char('r') => {
+                    app.input = "/react ".to_string();
+                    app.input_cursor = app.input.len();
+                    app.input_mode = InputMode::Command;
+                }
+
                 // User selection (for DM creation)
                 KeyCode::Char('J') => app.select_next_user(),
                 KeyCode::Char('K') => app.select_previous_user(),
 
+                // Focus mode toggle (v0.5.0)
+                KeyCode::F(10) => app.toggle_telemetry(),
+
                 _ => {}
             }
         }
-        InputMode::Editing => {
+        InputMode::Editing | InputMode::Command => {
             match key {
                 // Exit edit mode
                 KeyCode::Esc => {
@@ -271,9 +281,20 @@ fn handle_key_event(
                 }
                 // Send message
                 KeyCode::Enter => {
+                    let was_command_mode = app.input_mode == InputMode::Command;
                     let input = app.take_input();
                     if !input.is_empty() {
                         let channel_id = app.active_channel.clone();
+
+                        // Command mode only accepts slash commands.
+                        if was_command_mode && !input.starts_with('/') {
+                            app.add_message(ChatMessage::system_with_severity(
+                                "Command mode expects input starting with '/'".to_string(),
+                                app::MessageSeverity::Warning,
+                            ));
+                            app.exit_edit_mode();
+                            return Ok(());
+                        }
 
                         // Parse /verify command: /verify <username>
                         if let Some(peer) = input.strip_prefix("/verify ") {
@@ -346,13 +367,86 @@ fn handle_key_event(
                             return Ok(());
                         }
 
-                        // Parse /expire command: /expire <seconds> <message>
-                        let (content, ttl) = if let Some(rest) = input.strip_prefix("/expire ") {
+                        // Parse /react command: /react <emoji> OR /react <message_id> <emoji>
+                        if let Some(rest) = input.strip_prefix("/react ") {
+                            let mut parts = rest.split_whitespace();
+                            let first = parts.next();
+                            let second = parts.next();
+
+                            let (target_message_id, emoji) = match (first, second) {
+                                (Some(one), None) => {
+                                    if let Some(latest_id) = app.latest_reactable_message_id() {
+                                        (latest_id, one.to_string())
+                                    } else {
+                                        app.add_message(ChatMessage::system_with_severity(
+                                            "No message available to react to".to_string(),
+                                            app::MessageSeverity::Warning,
+                                        ));
+                                        app.exit_edit_mode();
+                                        return Ok(());
+                                    }
+                                }
+                                (Some(message_id), Some(emoji)) => {
+                                    (message_id.to_string(), emoji.to_string())
+                                }
+                                _ => {
+                                    app.add_message(ChatMessage::system_with_severity(
+                                        "Usage: /react <emoji> OR /react <message_id> <emoji>"
+                                            .to_string(),
+                                        app::MessageSeverity::Warning,
+                                    ));
+                                    app.exit_edit_mode();
+                                    return Ok(());
+                                }
+                            };
+
+                            let _ = command_tx.send(NetworkCommand::SendReaction {
+                                channel_id: channel_id.clone(),
+                                message_id: target_message_id.clone(),
+                                emoji: emoji.clone(),
+                            });
+
+                            let applied = app.add_reaction_to_channel(
+                                &channel_id,
+                                &target_message_id,
+                                &app.username.clone(),
+                                &emoji,
+                            );
+                            if !applied {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    format!(
+                                        "Couldn't find message {} in current channel",
+                                        target_message_id
+                                    ),
+                                    app::MessageSeverity::Warning,
+                                ));
+                            }
+
+                            app.exit_edit_mode();
+                            return Ok(());
+                        }
+
+                        // Parse /me command: /me <action>
+                        let (content, ttl, action) = if let Some(rest) = input.strip_prefix("/me ")
+                        {
+                            let action_text = rest.trim().to_string();
+                            if action_text.is_empty() {
+                                app.add_message(ChatMessage::system_with_severity(
+                                    "Usage: /me <action>".to_string(),
+                                    app::MessageSeverity::Warning,
+                                ));
+                                app.exit_edit_mode();
+                                return Ok(());
+                            }
+
+                            (action_text, None, true)
+                        } else if let Some(rest) = input.strip_prefix("/expire ") {
+                            // Parse /expire command: /expire <seconds> <message>
                             let parts: Vec<&str> = rest.splitn(2, ' ').collect();
                             if parts.len() == 2 {
                                 if let Ok(secs) = parts[0].parse::<i64>() {
                                     if secs > 0 && secs <= 86400 {
-                                        (parts[1].to_string(), Some(secs))
+                                        (parts[1].to_string(), Some(secs), false)
                                     } else {
                                         app.add_message(ChatMessage::system_with_severity(
                                             "Usage: /expire <1-86400> <message>".to_string(),
@@ -377,28 +471,46 @@ fn handle_key_event(
                                 app.exit_edit_mode();
                                 return Ok(());
                             }
+                        } else if input.starts_with('/') {
+                            app.add_message(ChatMessage::system_with_severity(
+                                format!("Unknown command: {}", input),
+                                app::MessageSeverity::Warning,
+                            ));
+                            app.exit_edit_mode();
+                            return Ok(());
                         } else {
-                            (input, None)
+                            (input, None, false)
                         };
 
                         // Send to network task
+                        let message_id = uuid::Uuid::new_v4().to_string();
+
                         let _ = command_tx.send(NetworkCommand::SendMessage {
                             content: content.clone(),
                             channel_id: channel_id.clone(),
                             ttl,
+                            action,
+                            message_id: message_id.clone(),
                         });
 
                         // Add to local chat immediately (optimistic update)
                         if let Some(ttl_secs) = ttl {
-                            let msg = ChatMessage::with_expiry(
+                            let mut msg = ChatMessage::with_expiry(
                                 app.username.clone(),
                                 format!("⏱ {}", content),
                                 false,
                                 ttl_secs,
                             );
+                            msg.set_id(message_id);
+                            app.add_message(msg);
+                        } else if action {
+                            let mut msg = ChatMessage::action(app.username.clone(), content, false);
+                            msg.set_id(message_id);
                             app.add_message(msg);
                         } else {
-                            app.add_message(ChatMessage::new(app.username.clone(), content, false));
+                            let mut msg = ChatMessage::new(app.username.clone(), content, false);
+                            msg.set_id(message_id);
+                            app.add_message(msg);
                         }
 
                         // Update telemetry
@@ -414,10 +526,21 @@ fn handle_key_event(
                 }
                 // Character input
                 KeyCode::Char(c) => {
+                    if app.input_mode == InputMode::Editing && app.input.is_empty() && c == '/' {
+                        app.input_char(c);
+                        app.input_mode = InputMode::Command;
+                        return Ok(());
+                    }
+
                     app.input_char(c);
 
-                    // Send typing indicator (throttled to 1 per second)
-                    if app.should_send_typing_indicator() {
+                    // Keep command mode active for slash-prefixed input only.
+                    if app.input_mode == InputMode::Command && !app.input.starts_with('/') {
+                        app.input_mode = InputMode::Editing;
+                    }
+
+                    // Send typing indicator (throttled to 1 per second) for regular chat input.
+                    if app.input_mode == InputMode::Editing && app.should_send_typing_indicator() {
                         let _ = command_tx.send(NetworkCommand::SendTypingStatus {
                             channel_id: app.active_channel.clone(),
                             is_typing: true,
@@ -429,8 +552,15 @@ fn handle_key_event(
                 KeyCode::Backspace => {
                     app.input_backspace();
 
+                    if app.input_mode == InputMode::Command && !app.input.starts_with('/') {
+                        app.input_mode = InputMode::Editing;
+                    }
+
                     // Send typing indicator if not empty
-                    if !app.input.is_empty() && app.should_send_typing_indicator() {
+                    if app.input_mode == InputMode::Editing
+                        && !app.input.is_empty()
+                        && app.should_send_typing_indicator()
+                    {
                         let _ = command_tx.send(NetworkCommand::SendTypingStatus {
                             channel_id: app.active_channel.clone(),
                             is_typing: true,
@@ -445,6 +575,8 @@ fn handle_key_event(
                 KeyCode::Right => {
                     app.input_cursor_right();
                 }
+                // Focus mode toggle (v0.5.0)
+                KeyCode::F(10) => app.toggle_telemetry(),
                 _ => {}
             }
         }
@@ -471,6 +603,8 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             channel_id,
             encrypted,
             ttl,
+            action,
+            message_id,
         } => {
             tracing::debug!(
                 "Received message from {} in channel {} (encrypted: {})",
@@ -482,8 +616,13 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             let datetime = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now);
 
             // Create message with actual timestamp/encryption, then apply TTL metadata if present.
-            let mut msg = ChatMessage::with_encryption(sender.clone(), content, encrypted);
+            let mut msg = if action {
+                ChatMessage::action(sender.clone(), content, encrypted)
+            } else {
+                ChatMessage::with_encryption(sender.clone(), content, encrypted)
+            };
             msg.timestamp = datetime;
+            msg.set_id(message_id);
             if let Some(ttl_secs) = ttl {
                 msg.content = format!("⏱ {}", msg.content);
                 msg.expires_at = Some(datetime + chrono::Duration::seconds(ttl_secs));
@@ -556,7 +695,14 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
             );
             app.set_user_typing(&channel_id, &username, is_typing);
         }
-        NetworkEvent::KeyExchangeReceived { username } => {
+        NetworkEvent::KeyExchangeReceived {
+            username,
+            public_key_b64,
+        } => {
+            if let Ok(public_key) = crate::crypto::decode_public_key(&public_key_b64) {
+                app.set_peer_public_key(username.clone(), *public_key.as_bytes());
+            }
+
             tracing::info!("✓ Key exchange complete with {}", username);
             app.add_message(ChatMessage::system_with_severity(
                 format!("🔒 Secure session established with {}", username),
@@ -616,6 +762,20 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
                 format!("🔐 Received group key from {} for {}", sender, group_id),
                 app::MessageSeverity::Info,
             ));
+        }
+        NetworkEvent::Reaction {
+            sender,
+            channel_id,
+            message_id,
+            emoji,
+        } => {
+            let applied = app.add_reaction_to_channel(&channel_id, &message_id, &sender, &emoji);
+            if !applied {
+                app.add_message(ChatMessage::system_with_severity(
+                    format!("Received reaction for unknown message id: {}", message_id),
+                    app::MessageSeverity::Warning,
+                ));
+            }
         }
     }
 }

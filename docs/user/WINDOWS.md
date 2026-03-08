@@ -93,4 +93,4 @@ After installation, connect to the public relay:
 ghostwire your_username
 ```
 
-For more usage information, see the main [README](../README.md#-usage).
+For more usage information, see the main [README](../../README.md#-usage) or the [User Guide](GUIDE.md).

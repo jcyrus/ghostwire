@@ -16,20 +16,18 @@ Created a **separate binary** for local development that doesn't use Shuttle:
 
 ### Files Changed
 
-1. **[`server/Cargo.toml`](server/Cargo.toml)**
-
+1. **[`server/Cargo.toml`](../../server/Cargo.toml)**
    - Added two binary targets:
      - `ghostwire-server` - For Shuttle deployment (uses `src/main.rs`)
      - `ghostwire-local` - For local development (uses `src/local.rs`)
 
-2. **[`server/src/local.rs`](server/src/local.rs)** (NEW)
-
+2. **[`server/src/local.rs`](../../server/src/local.rs)** (NEW)
    - Standalone binary with `#[tokio::main]`
    - No Shuttle dependencies
    - Listens on `0.0.0.0:8080`
    - Same functionality as Shuttle version
 
-3. **[`server/src/main.rs`](server/src/main.rs)**
+3. **[`server/src/main.rs`](../../server/src/main.rs)**
    - Removed unused `local_main()` function
    - Kept only Shuttle-specific code
 
@@ -86,7 +84,7 @@ cargo run -p ghostwire-client alice ws://localhost:8080/ws
 
 ## Documentation Updated
 
-- ✅ [`QUICKSTART.md`](../QUICKSTART.md)
+- ✅ [`QUICKSTART.md`](../../QUICKSTART.md)
 - ✅ [`docs/SERVER.md`](SERVER.md)
 
 All references to `cargo run -p ghostwire-server` have been updated to `cargo run --bin ghostwire-local`.

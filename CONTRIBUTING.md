@@ -43,7 +43,6 @@ cargo build
    ```
 
 3. **Make your changes**
-
    - Follow the code style (run `cargo fmt`)
    - Add tests if applicable
    - Update documentation
@@ -81,7 +80,6 @@ cargo build
 ## 🏗️ Architecture
 
 - **Client**: `client/src/`
-
   - `main.rs` - Entry point and UI loop
   - `app.rs` - Application state
   - `network.rs` - WebSocket communication
@@ -140,7 +138,7 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 - Open a discussion on GitHub
 - Check existing issues and PRs
-- Read the documentation in `docs/`
+- Read the [developer documentation](docs/dev/) for architecture and implementation details
 
 ---
 

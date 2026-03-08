@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum number of messages to keep in memory
@@ -63,6 +63,21 @@ pub struct WireMessage {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<i64>,
+    /// True if this is an IRC-style /me action message (v0.5.0)
+    #[serde(default)]
+    pub action: bool,
+    /// Stable sender-generated message UUID (v0.5.0)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// Target message UUID for reactions (v0.5.0)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction_to: Option<String>,
+    /// Reaction emoji payload (v0.5.0)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction_emoji: Option<String>,
 }
 
 /// Default channel is global for backward compatibility
@@ -92,6 +107,10 @@ pub struct ChatMessage {
     pub expires_at: Option<DateTime<Utc>>,
     /// Unique message ID for deletion tracking
     pub id: String,
+    /// True for IRC-style action lines (v0.5.0)
+    pub is_action: bool,
+    /// Reactions grouped by emoji -> set of usernames
+    pub reactions: HashMap<String, HashSet<String>>,
 }
 
 impl ChatMessage {
@@ -105,6 +124,8 @@ impl ChatMessage {
             encrypted: false,
             expires_at: None,
             id: uuid::Uuid::new_v4().to_string(),
+            is_action: false,
+            reactions: HashMap::new(),
         }
     }
 
@@ -118,6 +139,8 @@ impl ChatMessage {
             encrypted,
             expires_at: None,
             id: uuid::Uuid::new_v4().to_string(),
+            is_action: false,
+            reactions: HashMap::new(),
         }
     }
 
@@ -131,7 +154,45 @@ impl ChatMessage {
             encrypted,
             expires_at: Some(Utc::now() + chrono::Duration::seconds(ttl_seconds)),
             id: uuid::Uuid::new_v4().to_string(),
+            is_action: false,
+            reactions: HashMap::new(),
         }
+    }
+
+    pub fn action(sender: String, content: String, encrypted: bool) -> Self {
+        Self {
+            sender,
+            content,
+            timestamp: Utc::now(),
+            is_system: false,
+            severity: None,
+            encrypted,
+            expires_at: None,
+            id: uuid::Uuid::new_v4().to_string(),
+            is_action: true,
+            reactions: HashMap::new(),
+        }
+    }
+
+    pub fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+
+    pub fn add_reaction(&mut self, username: &str, emoji: &str) {
+        self.reactions
+            .entry(emoji.to_string())
+            .or_default()
+            .insert(username.to_string());
+    }
+
+    pub fn reaction_summary(&self) -> Vec<(String, usize)> {
+        let mut summary: Vec<(String, usize)> = self
+            .reactions
+            .iter()
+            .map(|(emoji, users)| (emoji.clone(), users.len()))
+            .collect();
+        summary.sort_by(|a, b| a.0.cmp(&b.0));
+        summary
     }
 
     /// Check if message has expired (for self-destruct)
@@ -160,6 +221,8 @@ impl ChatMessage {
             encrypted: false,
             expires_at: None,
             id: uuid::Uuid::new_v4().to_string(),
+            is_action: false,
+            reactions: HashMap::new(),
         }
     }
 
@@ -173,6 +236,8 @@ impl ChatMessage {
             encrypted: false,
             expires_at: None,
             id: uuid::Uuid::new_v4().to_string(),
+            is_action: false,
+            reactions: HashMap::new(),
         }
     }
 }
@@ -340,6 +405,7 @@ impl Default for Telemetry {
 pub enum InputMode {
     Normal,  // Navigation mode
     Editing, // Typing a message
+    Command, // Slash-command palette mode
 }
 
 /// Timestamp display format
@@ -422,6 +488,9 @@ pub struct App {
     /// Should quit the application
     pub should_quit: bool,
 
+    /// Whether the telemetry sidebar is visible (v0.5.0 Focus Mode)
+    pub show_telemetry: bool,
+
     /// Timestamp display format
     pub timestamp_format: TimestampFormat,
 
@@ -433,6 +502,9 @@ pub struct App {
 
     /// Last frame render time
     pub last_frame_time: Option<std::time::Instant>,
+
+    /// Peer public keys for deterministic username coloring (v0.5.0)
+    pub peer_public_keys: std::collections::HashMap<String, [u8; 32]>,
 }
 
 impl App {
@@ -463,11 +535,28 @@ impl App {
             telemetry: Telemetry::default(),
             is_connected: false,
             should_quit: false,
+            show_telemetry: true,
             timestamp_format: TimestampFormat::default(),
             last_typing_sent: None,
             frame_times: VecDeque::with_capacity(10),
             last_frame_time: None,
+            peer_public_keys: std::collections::HashMap::new(),
         }
+    }
+
+    /// Toggle telemetry sidebar visibility (Focus Mode)
+    pub fn toggle_telemetry(&mut self) {
+        self.show_telemetry = !self.show_telemetry;
+    }
+
+    /// Store peer public key bytes for deterministic username colors.
+    pub fn set_peer_public_key(&mut self, username: String, public_key: [u8; 32]) {
+        self.peer_public_keys.insert(username, public_key);
+    }
+
+    /// Get cached peer public key bytes if known.
+    pub fn peer_public_key(&self, username: &str) -> Option<[u8; 32]> {
+        self.peer_public_keys.get(username).copied()
     }
 
     /// Add a message to the active channel
@@ -514,6 +603,35 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Get the latest non-system message id in the active channel.
+    pub fn latest_reactable_message_id(&self) -> Option<String> {
+        self.channels.get(&self.active_channel).and_then(|channel| {
+            channel
+                .messages
+                .iter()
+                .rev()
+                .find(|m| !m.is_system)
+                .map(|m| m.id.clone())
+        })
+    }
+
+    /// Add or update a reaction on a message in a specific channel.
+    pub fn add_reaction_to_channel(
+        &mut self,
+        channel_id: &str,
+        message_id: &str,
+        username: &str,
+        emoji: &str,
+    ) -> bool {
+        if let Some(channel) = self.channels.get_mut(channel_id) {
+            if let Some(message) = channel.messages.iter_mut().find(|m| m.id == message_id) {
+                message.add_reaction(username, emoji);
+                return true;
+            }
+        }
+        false
     }
 
     /// Add a user to the roster

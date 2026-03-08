@@ -1,62 +1,56 @@
 # GhostWire Documentation
 
-This directory contains technical documentation for developers and contributors.
+## 👤 User Documentation — [`docs/user/`](user/)
 
-## 📚 Documentation Index
+Guides for installing, configuring, and using GhostWire.
 
-### Architecture & Implementation
+| Document                           | Description                                                                         |
+| ---------------------------------- | ----------------------------------------------------------------------------------- |
+| [**User Guide**](user/GUIDE.md)    | Comprehensive guide — interface, keybinds, commands, configuration, troubleshooting |
+| [Security Model](user/SECURITY.md) | Cryptographic stack, threat model, what GhostWire protects                          |
+| [Windows Install](user/WINDOWS.md) | Windows-specific installation and PATH setup                                        |
 
-- **[CLIENT.md](CLIENT.md)** - Client architecture, async/sync split, module breakdown
-- **[SERVER.md](SERVER.md)** - Server architecture, deployment, relay pattern
-- **[FEATURES.md](FEATURES.md)** - Detailed feature implementation documentation
+## 🛠 Developer Documentation — [`docs/dev/`](dev/)
 
-### Development
+Architecture and implementation details for contributors.
 
-- **[LOCAL_DEV.md](LOCAL_DEV.md)** - Local development setup and troubleshooting
+| Document                              | Description                                      |
+| ------------------------------------- | ------------------------------------------------ |
+| [Client Architecture](dev/CLIENT.md)  | Async/sync split, thread model, module breakdown |
+| [Server Architecture](dev/SERVER.md)  | Relay pattern, state management, deployment      |
+| [Feature Details](dev/FEATURES.md)    | Implementation specifics by version              |
+| [Local Development](dev/LOCAL_DEV.md) | Two-binary dev setup, testing procedures         |
 
 ## 🚀 Quick Links
 
-**For Users:**
+| I want to...                    | Read this                            |
+| ------------------------------- | ------------------------------------ |
+| Install and use GhostWire       | [Quick Start](../QUICKSTART.md)      |
+| Learn all features and keybinds | [User Guide](user/GUIDE.md)          |
+| Understand channels and DMs     | [Channels](../CHANNELS.md)           |
+| Contribute code                 | [Contributing](../CONTRIBUTING.md)   |
+| See what's new                  | [Changelog](../CHANGELOG.md)         |
+| Understand the security model   | [Security](user/SECURITY.md)         |
+| Deploy the server               | [Server Architecture](dev/SERVER.md) |
+| Debug local development         | [Local Dev](dev/LOCAL_DEV.md)        |
 
-- [README.md](../README.md) - Project overview and installation
-- [QUICKSTART.md](../QUICKSTART.md) - Getting started guide
-- [CHANNELS.md](../CHANNELS.md) - Channel system user guide
-
-**For Contributors:**
-
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
-- [CHANGELOG.md](../CHANGELOG.md) - Version history
-
-## 📖 Documentation Structure
+## 📁 Structure
 
 ```
-GhostWire/
-├── README.md              # Project overview (user-facing)
-├── QUICKSTART.md          # Getting started (user-facing)
-├── CHANNELS.md            # Channel guide (user-facing)
-├── CONTRIBUTING.md        # Contributor guidelines
-├── CHANGELOG.md           # Version history
-├── LICENSE                # MIT License
-│
-└── docs/                  # Technical documentation
-    ├── README.md          # This file
+docs/
+├── README.md              # This file — documentation hub
+├── user/                  # User-facing documentation
+│   ├── README.md          # User docs index
+│   ├── GUIDE.md           # Comprehensive user guide
+│   ├── SECURITY.md        # Security model & threat analysis
+│   └── WINDOWS.md         # Windows installation guide
+└── dev/                   # Developer documentation
+    ├── README.md          # Dev docs index
     ├── CLIENT.md          # Client architecture
     ├── SERVER.md          # Server architecture
-    ├── FEATURES.md        # Feature details
-    └── LOCAL_DEV.md       # Development setup
+    ├── FEATURES.md        # Feature implementation details
+    └── LOCAL_DEV.md       # Local development setup
 ```
-
-## 🔍 Finding What You Need
-
-| I want to...                   | Read this                             |
-| ------------------------------ | ------------------------------------- |
-| Install and use GhostWire      | [QUICKSTART.md](../QUICKSTART.md)     |
-| Understand channels and DMs    | [CHANNELS.md](../CHANNELS.md)         |
-| Contribute code                | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| Understand client architecture | [CLIENT.md](CLIENT.md)                |
-| Deploy the server              | [SERVER.md](SERVER.md)                |
-| See what's new                 | [CHANGELOG.md](../CHANGELOG.md)       |
-| Debug local development        | [LOCAL_DEV.md](LOCAL_DEV.md)          |
 
 ---
 

@@ -193,12 +193,15 @@ cargo run --bin ghostwire-local
 
 ## 📂 Documentation
 
-For detailed technical documentation, see the [`docs/`](docs/) directory:
+- **[User Guide](docs/user/GUIDE.md)** - Comprehensive guide to using GhostWire
+- **[Security Model](docs/user/SECURITY.md)** - Cryptographic design and threat analysis
 
-- **[Client Architecture](docs/CLIENT.md)** - Async/sync split, module breakdown
-- **[Server Architecture](docs/SERVER.md)** - Relay pattern, deployment
-- **[Feature Details](docs/FEATURES.md)** - Implementation specifics
-- **[Local Development](docs/LOCAL_DEV.md)** - Development setup
+For developer documentation, see the [`docs/dev/`](docs/dev/) directory:
+
+- **[Client Architecture](docs/dev/CLIENT.md)** - Async/sync split, module breakdown
+- **[Server Architecture](docs/dev/SERVER.md)** - Relay pattern, deployment
+- **[Feature Details](docs/dev/FEATURES.md)** - Implementation specifics
+- **[Local Development](docs/dev/LOCAL_DEV.md)** - Development setup
 
 <details>
 <summary><strong>🔎 Click to expand Technical Internals</strong></summary>

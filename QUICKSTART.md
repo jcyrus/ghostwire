@@ -205,8 +205,9 @@ cargo build -p ghostwire-server --release
 
 ## Next Steps
 
-- Read [`docs/CLIENT.md`](docs/CLIENT.md) for detailed client architecture
-- Read [`docs/SERVER.md`](docs/SERVER.md) for server deployment guide
+- Read the [User Guide](docs/user/GUIDE.md) for the full feature and keybind reference
+- Read [`docs/dev/CLIENT.md`](docs/dev/CLIENT.md) for detailed client architecture
+- Read [`docs/dev/SERVER.md`](docs/dev/SERVER.md) for server deployment guide
 - Customize the UI colors in `client/src/ui.rs`
 - Add encryption (future feature)
 

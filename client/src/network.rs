@@ -30,6 +30,16 @@ pub enum NetworkEvent {
         channel_id: String,
         encrypted: bool,  // v0.3.0: true if message was encrypted
         ttl: Option<i64>, // v0.4.0: TTL for self-destructing messages
+        action: bool,     // v0.5.0: IRC-style /me action message
+        message_id: String,
+    },
+
+    /// Reaction applied to a message (v0.5.0)
+    Reaction {
+        sender: String,
+        channel_id: String,
+        message_id: String,
+        emoji: String,
     },
 
     /// User joined
@@ -58,7 +68,10 @@ pub enum NetworkEvent {
     },
 
     /// Key exchange received (v0.3.0 E2EE)
-    KeyExchangeReceived { username: String },
+    KeyExchangeReceived {
+        username: String,
+        public_key_b64: String,
+    },
 
     /// Safety number verification result (v0.4.0)
     VerificationResult {
@@ -88,6 +101,15 @@ pub enum NetworkCommand {
         content: String,
         channel_id: String,
         ttl: Option<i64>,
+        action: bool,
+        message_id: String,
+    },
+
+    /// Send a reaction for a specific message ID
+    SendReaction {
+        channel_id: String,
+        message_id: String,
+        emoji: String,
     },
 
     /// Send typing status
@@ -219,6 +241,10 @@ pub async fn network_task(
             encrypted: false,
             recipient: None,
             ttl: None,
+            action: false,
+            message_id: None,
+            reaction_to: None,
+            reaction_emoji: None,
         };
 
         if let Ok(json) = serde_json::to_string(&auth_msg) {
@@ -247,6 +273,10 @@ pub async fn network_task(
             encrypted: false,
             recipient: None,
             ttl: None,
+            action: false,
+            message_id: None,
+            reaction_to: None,
+            reaction_emoji: None,
         };
 
         if let Ok(json) = serde_json::to_string(&key_exchange_msg) {
@@ -348,7 +378,13 @@ pub async fn network_task(
                 // Handle commands from UI
                 Some(command) = command_rx.recv() => {
                     match command {
-                        NetworkCommand::SendMessage { content, channel_id, ttl } => {
+                        NetworkCommand::SendMessage {
+                            content,
+                            channel_id,
+                            ttl,
+                            action,
+                            message_id,
+                        } => {
                             let mut pending_dm_commit: Option<String> = None;
                             let mut pending_group_commit: Option<String> = None;
 
@@ -459,6 +495,10 @@ pub async fn network_task(
                                 encrypted,
                                 recipient,
                                 ttl,
+                                action,
+                                message_id: Some(message_id),
+                                reaction_to: None,
+                                reaction_emoji: None,
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
@@ -494,6 +534,10 @@ pub async fn network_task(
                                 encrypted: false,
                                 recipient: None,
                                 ttl: None,
+                                action: false,
+                                message_id: None,
+                                reaction_to: None,
+                                reaction_emoji: None,
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
@@ -619,6 +663,10 @@ pub async fn network_task(
                                     encrypted: false,
                                     recipient: None,
                                     ttl: None,
+                                    action: false,
+                                    message_id: None,
+                                    reaction_to: None,
+                                    reaction_emoji: None,
                                 };
 
                                 if let Ok(json) = serde_json::to_string(&msg) {
@@ -684,6 +732,10 @@ pub async fn network_task(
                                     encrypted: true,
                                     recipient: Some(member.clone()),
                                     ttl: None,
+                                    action: false,
+                                    message_id: None,
+                                    reaction_to: None,
+                                    reaction_emoji: None,
                                 };
                                 if let Ok(json) = serde_json::to_string(&msg) {
                                     if write.send(Message::Text(json.into())).await.is_ok() {
@@ -695,6 +747,37 @@ pub async fn network_task(
                                 }
                             }
                             tracing::info!("Distributed sender key for group {} to {} members", group_id, members.len());
+                        }
+                        NetworkCommand::SendReaction {
+                            channel_id,
+                            message_id,
+                            emoji,
+                        } => {
+                            let msg = WireMessage {
+                                msg_type: MessageType::Message,
+                                payload: String::new(),
+                                channel: channel_id,
+                                meta: MessageMeta {
+                                    sender: username.clone(),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                },
+                                is_typing: false,
+                                encrypted: false,
+                                recipient: None,
+                                ttl: None,
+                                action: false,
+                                message_id: None,
+                                reaction_to: Some(message_id),
+                                reaction_emoji: Some(emoji),
+                            };
+
+                            if let Ok(json) = serde_json::to_string(&msg) {
+                                if let Err(e) = write.send(Message::Text(json.into())).await {
+                                    let _ = event_tx.send(NetworkEvent::Error {
+                                        message: format!("Failed to send reaction: {}", e),
+                                    });
+                                }
+                            }
                         }
                         NetworkCommand::Disconnect => {
                             tracing::info!("Received disconnect command");
@@ -735,6 +818,18 @@ fn handle_wire_message(
 ) {
     match msg.msg_type {
         MessageType::Message => {
+            if let (Some(target_id), Some(emoji)) =
+                (msg.reaction_to.clone(), msg.reaction_emoji.clone())
+            {
+                let _ = event_tx.send(NetworkEvent::Reaction {
+                    sender: msg.meta.sender,
+                    channel_id: msg.channel,
+                    message_id: target_id,
+                    emoji,
+                });
+                return;
+            }
+
             // Decrypt message if it's encrypted
             let (content, _message_id) = if msg.encrypted {
                 let message_id = uuid::Uuid::new_v4().to_string();
@@ -878,6 +973,10 @@ fn handle_wire_message(
                 channel_id: msg.channel,
                 encrypted: msg.encrypted,
                 ttl: msg.ttl,
+                action: msg.action,
+                message_id: msg
+                    .message_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             });
         }
         MessageType::System => {
@@ -949,6 +1048,7 @@ fn handle_wire_message(
             // Notify UI layer
             let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {
                 username: their_username,
+                public_key_b64: their_public_key,
             });
         }
         MessageType::SenderKey => {
