@@ -71,10 +71,15 @@ impl PeerSession {
         self.recv_counter += 1;
     }
 
-    /// Check if a nonce has been seen before. Returns true if replay detected.
-    pub fn check_nonce_replay(&mut self, nonce: &[u8; 12]) -> bool {
+    /// Check if a nonce has been seen before without mutating state.
+    pub fn nonce_seen(&self, nonce: &[u8; 12]) -> bool {
+        self.seen_nonces.contains(nonce)
+    }
+
+    /// Record a nonce after successful decryption.
+    pub fn record_nonce(&mut self, nonce: &[u8; 12]) {
         if self.seen_nonces.contains(nonce) {
-            return true; // Replay!
+            return;
         }
         // Evict oldest if at capacity
         if self.seen_nonces.len() >= MAX_NONCE_HISTORY {
@@ -84,7 +89,6 @@ impl PeerSession {
         }
         self.seen_nonces.insert(*nonce);
         self.nonce_order.push_back(*nonce);
-        false
     }
 }
 
@@ -350,11 +354,6 @@ impl KeyStore {
         (state.key, state.chain_key)
     }
 
-    /// Check if we have our own sender key for this group.
-    pub fn has_our_sender_key(&self, group_id: &str) -> bool {
-        self.our_sender_keys.contains_key(group_id)
-    }
-
     /// Derive the next group-send key without mutating state.
     pub fn derive_group_send_key(&self, group_id: &str) -> Option<[u8; 32]> {
         self.our_sender_keys
@@ -384,6 +383,22 @@ impl KeyStore {
             .group_sender_keys
             .entry(group_id.to_string())
             .or_default();
+
+        if let Some(existing) = group.get(sender) {
+            // Ignore stale/duplicate distributions to avoid resetting an active receive chain.
+            if existing.key == key && existing.chain_key == chain_key {
+                return;
+            }
+            if existing.counter > 0 {
+                tracing::warn!(
+                    "Ignoring sender-key reset for {} in {} because receive chain already advanced",
+                    sender,
+                    group_id
+                );
+                return;
+            }
+        }
+
         group.insert(
             sender.to_string(),
             SenderKeyState::from_distribution(key, chain_key),
@@ -532,7 +547,8 @@ mod tests {
         let session = alice_store.get_session("bob").unwrap();
         let nonce = [7u8; 12];
 
-        assert!(!session.check_nonce_replay(&nonce));
-        assert!(session.check_nonce_replay(&nonce));
+        assert!(!session.nonce_seen(&nonce));
+        session.record_nonce(&nonce);
+        assert!(session.nonce_seen(&nonce));
     }
 }

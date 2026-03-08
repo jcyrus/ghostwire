@@ -36,7 +36,7 @@ const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
 #[command(name = "ghostwire")]
 #[command(author, version, about, long_about = None)]
 #[command(
-    after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           Switch between chat and input modes\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit"
+    after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           In edit mode: back to normal | in normal mode: quit\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit"
 )]
 struct Cli {
     /// Username for the chat session (default: random ghost_XXXXXXXX)
@@ -508,6 +508,9 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
                 ChatMessage::with_encryption(sender.clone(), content, encrypted)
             };
             msg.timestamp = datetime;
+            if let Some(ttl_secs) = ttl {
+                msg.expires_at = Some(datetime + chrono::Duration::seconds(ttl_secs));
+            }
 
             // Add user to roster if not already there (for user discovery)
             if !app.users.iter().any(|u| u.username == sender) && sender != app.username {

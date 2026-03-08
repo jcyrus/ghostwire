@@ -35,16 +35,6 @@ pub struct SessionKeys {
     pub chain_key: [u8; 32], // For forward secrecy (Double Ratchet)
 }
 
-impl Clone for SessionKeys {
-    fn clone(&self) -> Self {
-        Self {
-            encryption_key: self.encryption_key,
-            mac_key: self.mac_key,
-            chain_key: self.chain_key,
-        }
-    }
-}
-
 impl Drop for SessionKeys {
     fn drop(&mut self) {
         // Securely zero out keys on drop
@@ -173,10 +163,18 @@ pub fn verify_signature(
 pub fn compute_safety_number(our_identity: &VerifyingKey, their_identity: &VerifyingKey) -> String {
     use sha2::Digest;
 
-    // Combine both public keys and hash
+    // Canonicalize key order so both peers compute the same value.
+    let our_bytes = our_identity.as_bytes();
+    let their_bytes = their_identity.as_bytes();
+
     let mut hasher = Sha256::new();
-    hasher.update(our_identity.as_bytes());
-    hasher.update(their_identity.as_bytes());
+    if our_bytes <= their_bytes {
+        hasher.update(our_bytes);
+        hasher.update(their_bytes);
+    } else {
+        hasher.update(their_bytes);
+        hasher.update(our_bytes);
+    }
     let hash = hasher.finalize();
 
     // Take first 64 bits (16 hex chars) for display
