@@ -9,8 +9,6 @@ use crate::crypto::{
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet, VecDeque};
 use x25519_dalek::PublicKey;
@@ -109,8 +107,8 @@ impl SenderKeyState {
     pub fn generate() -> Self {
         let mut key = [0u8; 32];
         let mut chain_key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
-        OsRng.fill_bytes(&mut chain_key);
+        rand::fill(&mut key);
+        rand::fill(&mut chain_key);
         Self {
             key,
             chain_key,

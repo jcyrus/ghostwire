@@ -20,7 +20,7 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Percentage(60), // Middle: Chat
             Constraint::Percentage(20), // Right: Telemetry
         ])
-        .split(f.size());
+        .split(f.area());
 
     // Render each section
     render_channel_list(f, app, chunks[0]);
@@ -469,10 +469,10 @@ fn render_input_box(f: &mut Frame, app: &App, area: Rect) {
             .unwrap_or(0);
         let col_in_line = app.input_cursor.saturating_sub(current_line_start);
 
-        f.set_cursor(
+        f.set_cursor_position((
             area.x + (col_in_line % available_width) as u16 + 1,
             area.y + (lines_before + col_in_line / available_width) as u16 + 1,
-        );
+        ));
     }
 }
 

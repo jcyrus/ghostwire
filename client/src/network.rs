@@ -222,7 +222,7 @@ pub async fn network_task(
         };
 
         if let Ok(json) = serde_json::to_string(&auth_msg) {
-            if let Err(e) = write.send(Message::Text(json)).await {
+            if let Err(e) = write.send(Message::Text(json.into())).await {
                 let _ = event_tx.send(NetworkEvent::Error {
                     message: format!("Failed to authenticate: {}", e),
                 });
@@ -250,7 +250,7 @@ pub async fn network_task(
         };
 
         if let Ok(json) = serde_json::to_string(&key_exchange_msg) {
-            if let Err(e) = write.send(Message::Text(json)).await {
+            if let Err(e) = write.send(Message::Text(json.into())).await {
                 tracing::warn!("Failed to send key exchange: {}", e);
             }
         }
@@ -278,7 +278,7 @@ pub async fn network_task(
                         timestamps.insert(ping_data.clone(), Instant::now());
                     }
 
-                    if let Err(e) = write.send(Message::Ping(ping_data)).await {
+                    if let Err(e) = write.send(Message::Ping(ping_data.into())).await {
                         let _ = event_tx.send(NetworkEvent::Error {
                             message: format!("Failed to send heartbeat: {}", e),
                         });
@@ -324,7 +324,7 @@ pub async fn network_task(
                         Ok(Message::Pong(data)) => {
                             // Server responded to our ping - calculate round-trip time
                             if let Ok(mut timestamps) = ping_timestamps.lock() {
-                                if let Some(sent_time) = timestamps.remove(&data) {
+                                if let Some(sent_time) = timestamps.remove(data.as_ref()) {
                                     let rtt = sent_time.elapsed();
                                     let latency_ms = rtt.as_millis() as u64;
                                     let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
@@ -462,7 +462,7 @@ pub async fn network_task(
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
-                                if let Err(e) = write.send(Message::Text(json)).await {
+                                if let Err(e) = write.send(Message::Text(json.into())).await {
                                     let _ = event_tx.send(NetworkEvent::Error {
                                         message: format!("Failed to send message: {}", e),
                                     });
@@ -497,7 +497,7 @@ pub async fn network_task(
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
-                                if let Err(e) = write.send(Message::Text(json)).await {
+                                if let Err(e) = write.send(Message::Text(json.into())).await {
                                     tracing::debug!("Failed to send typing status: {}", e);
                                 }
                             }
@@ -622,7 +622,7 @@ pub async fn network_task(
                                 };
 
                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                    let _ = write.send(Message::Text(json)).await;
+                                    let _ = write.send(Message::Text(json.into())).await;
                                 }
 
                                 let _ = event_tx.send(NetworkEvent::KeyRotated);
@@ -686,7 +686,7 @@ pub async fn network_task(
                                     ttl: None,
                                 };
                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                    if write.send(Message::Text(json)).await.is_ok() {
+                                    if write.send(Message::Text(json.into())).await.is_ok() {
                                         let mut store = keystore.lock().unwrap();
                                         if let Ok(session) = store.get_session(member) {
                                             session.commit_send();

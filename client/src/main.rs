@@ -17,14 +17,9 @@ mod ui;
 use app::{App, ChatMessage, InputMode, User};
 use chrono::Utc;
 use clap::Parser;
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use network::{NetworkCommand, NetworkEvent};
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
+use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -102,11 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Setup terminal for TUI
     tracing::debug!("Initializing terminal UI");
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = ratatui::init();
 
     // Main UI loop (synchronous, runs on main thread)
     tracing::info!("Starting main UI loop");
@@ -114,13 +105,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Cleanup: Restore terminal
     tracing::debug!("Cleaning up terminal");
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    ratatui::restore();
 
     // Shutdown network task
     tracing::debug!("Shutting down network task");
@@ -139,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Main UI event loop - runs synchronously on the main thread
 fn run_ui_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut DefaultTerminal,
     app: &mut App,
     event_rx: &mut mpsc::UnboundedReceiver<NetworkEvent>,
     command_tx: &mpsc::UnboundedSender<NetworkCommand>,
@@ -176,7 +161,7 @@ fn run_ui_loop(
 
         // Update memory usage every 500ms (don't need it every frame)
         if last_memory_update.elapsed() >= Duration::from_millis(500) {
-            system.refresh_process(pid);
+            let _ = system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), false);
             app.update_memory_usage(&system, pid);
             last_memory_update = Instant::now();
         }
