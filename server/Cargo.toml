@@ -24,18 +24,18 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 
 # Web Framework
-axum = { version = "0.7", features = ["ws"] }
-shuttle-axum = "0.50.0"
-shuttle-runtime = "0.50.0"
+axum = { version = "0.8.8", features = ["ws"] }
+shuttle-axum = "0.57.0"
+shuttle-runtime = "0.57.0"
 
 # Async utilities
-futures = "0.3"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors"] }
+futures = "0.3.32"
+tower = "0.5.3"
+tower-http = { version = "0.6.8", features = ["trace", "cors"] }
 
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Additional utilities
-uuid = { version = "1.6", features = ["v4", "serde"] }
+uuid = { version = "1.22.0", features = ["v4", "serde"] }

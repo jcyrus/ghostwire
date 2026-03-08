@@ -50,17 +50,25 @@ impl RelayState {
     async fn register_client(&self) -> (ClientId, mpsc::UnboundedReceiver<String>) {
         let id = self.next_id().await;
         let (tx, rx) = mpsc::unbounded_channel();
-        
+
         self.clients.write().await.insert(id, tx);
-        info!("Client {} connected. Total clients: {}", id, self.clients.read().await.len());
-        
+        info!(
+            "Client {} connected. Total clients: {}",
+            id,
+            self.clients.read().await.len()
+        );
+
         (id, rx)
     }
 
     /// Unregister a client
     async fn unregister_client(&self, id: ClientId) {
         self.clients.write().await.remove(&id);
-        info!("Client {} disconnected. Total clients: {}", id, self.clients.read().await.len());
+        info!(
+            "Client {} disconnected. Total clients: {}",
+            id,
+            self.clients.read().await.len()
+        );
     }
 
     /// Broadcast a message to all clients except the sender
@@ -111,25 +119,25 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
     let mut send_task = tokio::spawn(async move {
         let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
         heartbeat.tick().await; // First tick completes immediately
-        
+
         loop {
             tokio::select! {
                 // Send heartbeat ping
                 _ = heartbeat.tick() => {
-                    if ws_tx.send(Message::Ping(vec![])).await.is_err() {
+                    if ws_tx.send(Message::Ping(vec![].into())).await.is_err() {
                         // Client disconnected
                         break;
                     }
                 }
-                
+
                 // Forward broadcast messages
                 Some(msg) = broadcast_rx.recv() => {
-                    if ws_tx.send(Message::Text(msg)).await.is_err() {
+                    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
                         // Client disconnected
                         break;
                     }
                 }
-                
+
                 // Channel closed
                 else => break,
             }
@@ -143,12 +151,14 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
             match result {
                 Ok(Message::Text(text)) => {
                     debug!("Client {} sent: {} bytes", client_id, text.len());
-                    
+
                     // Broadcast to all other clients
-                    state_clone.broadcast(BroadcastMessage {
-                        from: client_id,
-                        content: text,
-                    }).await;
+                    state_clone
+                        .broadcast(BroadcastMessage {
+                            from: client_id,
+                            content: text.to_string(),
+                        })
+                        .await;
                 }
                 Ok(Message::Close(_)) => {
                     info!("Client {} sent close frame", client_id);
