@@ -125,7 +125,7 @@ pub async fn network_task(
 
     // Initialize security audit logger
     let audit_logger = Arc::new(Mutex::new({
-        let config_dir = directories::ProjectDirs::from("com", "ghostwire", "GhostWire")
+        let config_dir = directories::ProjectDirs::from("com", "jcyrus", "ghostwire")
             .map(|dirs| dirs.config_dir().to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         SecurityAuditLogger::new(&config_dir)
@@ -142,11 +142,6 @@ pub async fn network_task(
     };
     tracing::info!("Identity fingerprint: {}", identity_fingerprint);
 
-    // Send our public key on connect (broadcast for key exchange)
-    let our_public_key = {
-        let store = keystore.lock().unwrap();
-        store.get_our_public_key()
-    };
     // Auto-reconnect configuration
     let max_attempts = 10;
     let initial_backoff_secs = 1;
@@ -236,6 +231,10 @@ pub async fn network_task(
         }
 
         // Send key exchange message to announce our public key (v0.3.0)
+        let our_public_key = {
+            let store = keystore.lock().unwrap();
+            store.get_our_public_key()
+        };
         let key_exchange_msg = WireMessage {
             msg_type: MessageType::KeyExchange,
             payload: our_public_key.clone(),
@@ -382,19 +381,34 @@ pub async fn network_task(
                                                     (encrypted_payload, true)
                                                 }
                                                 Err(e) => {
-                                                    tracing::warn!("Encryption failed: {}, sending plaintext", e);
-                                                    (content.clone(), false)
+                                                    let _ = event_tx.send(NetworkEvent::Error {
+                                                        message: format!(
+                                                            "Encrypted DM to {} failed: {}",
+                                                            recip, e
+                                                        ),
+                                                    });
+                                                    continue;
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            tracing::warn!("Failed to get session: {}, sending plaintext", e);
-                                            (content.clone(), false)
+                                            let _ = event_tx.send(NetworkEvent::Error {
+                                                message: format!(
+                                                    "No usable DM session with {}: {}",
+                                                    recip, e
+                                                ),
+                                            });
+                                            continue;
                                         }
                                     }
                                 } else {
-                                    tracing::debug!("No session with {}, sending plaintext", recip);
-                                    (content.clone(), false)
+                                    let _ = event_tx.send(NetworkEvent::Error {
+                                        message: format!(
+                                            "Cannot send encrypted DM to {}: no active session",
+                                            recip
+                                        ),
+                                    });
+                                    continue;
                                 }
                             } else if channel_id.starts_with("group:") {
                                 let store = keystore.lock().unwrap();
@@ -410,18 +424,23 @@ pub async fn network_task(
                                             (encrypted_payload, true)
                                         }
                                         Err(e) => {
-                                            tracing::warn!("Group encryption failed: {}, sending plaintext", e);
-                                            (content.clone(), false)
+                                            let _ = event_tx.send(NetworkEvent::Error {
+                                                message: format!(
+                                                    "Encrypted group send in {} failed: {}",
+                                                    channel_id, e
+                                                ),
+                                            });
+                                            continue;
                                         }
                                     }
                                 } else {
-                                    if !store.has_our_sender_key(&channel_id) {
-                                        tracing::debug!(
-                                            "No sender key for group {}, sending plaintext",
+                                    let _ = event_tx.send(NetworkEvent::Error {
+                                        message: format!(
+                                            "Cannot send encrypted group message in {}: missing sender key (try /groupkey)",
                                             channel_id
-                                        );
-                                    }
-                                    (content.clone(), false)
+                                        ),
+                                    });
+                                    continue;
                                 }
                             } else {
                                 // Global channel remains plaintext
@@ -564,6 +583,11 @@ pub async fn network_task(
                             };
 
                             if needs_rotation {
+                                let peers_to_rebootstrap = {
+                                    let store = keystore.lock().unwrap();
+                                    store.active_sessions()
+                                };
+
                                 {
                                     let mut store = keystore.lock().unwrap();
                                     store.rotate_ephemeral_key();
@@ -571,7 +595,10 @@ pub async fn network_task(
 
                                 // Audit log the rotation
                                 audit_logger.lock().unwrap().log(SecurityEvent::KeyRotated {
-                                    reason: "24-hour automatic rotation".to_string(),
+                                    reason: format!(
+                                        "24-hour automatic rotation; {} sessions reset and re-bootstrap initiated",
+                                        peers_to_rebootstrap.len()
+                                    ),
                                 });
 
                                 // Re-broadcast new public key
@@ -582,7 +609,7 @@ pub async fn network_task(
 
                                 let msg = WireMessage {
                                     msg_type: MessageType::KeyExchange,
-                                    payload: public_key,
+                                    payload: public_key.clone(),
                                     channel: "global".to_string(),
                                     meta: MessageMeta {
                                         sender: username.clone(),
@@ -599,6 +626,9 @@ pub async fn network_task(
                                 }
 
                                 let _ = event_tx.send(NetworkEvent::KeyRotated);
+                                let _ = event_tx.send(NetworkEvent::SystemMessage {
+                                    content: "Encrypted conversations were reset after key rotation; sessions are re-establishing.".to_string(),
+                                });
                             }
                         }
                         NetworkCommand::DistributeGroupKey { group_id, members } => {
@@ -755,12 +785,13 @@ fn handle_wire_message(
                     }
                 } else if let Ok(session) = store.get_session(&msg.meta.sender) {
                     // Replay protection: extract nonce and check for duplicates
+                    let mut extracted_nonce: Option<[u8; 12]> = None;
                     let decrypted = {
                         if let Ok(payload_bytes) = BASE64.decode(&msg.payload) {
                             if payload_bytes.len() >= 12 {
                                 let mut nonce = [0u8; 12];
                                 nonce.copy_from_slice(&payload_bytes[..12]);
-                                if session.check_nonce_replay(&nonce) {
+                                if session.nonce_seen(&nonce) {
                                     tracing::warn!(
                                         "Replay attack detected from {}",
                                         msg.meta.sender
@@ -773,6 +804,7 @@ fn handle_wire_message(
                                     );
                                     return;
                                 }
+                                extracted_nonce = Some(nonce);
                             }
                         }
 
@@ -782,6 +814,9 @@ fn handle_wire_message(
 
                     match decrypted {
                         Ok(plaintext) => {
+                            if let Some(nonce) = extracted_nonce {
+                                session.record_nonce(&nonce);
+                            }
                             session.commit_recv();
                             tracing::debug!("Decrypted message from {}", msg.meta.sender);
                             store.touch_session(&msg.meta.sender);
@@ -875,6 +910,13 @@ fn handle_wire_message(
             });
         }
         MessageType::KeyExchange => {
+            // If a key exchange is targeted, only the intended recipient should process it.
+            if let Some(recipient) = &msg.recipient {
+                if recipient != local_username {
+                    return;
+                }
+            }
+
             // Store peer's public key and establish session
             let their_username = msg.meta.sender.clone();
             let their_public_key = msg.payload.clone();
