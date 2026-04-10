@@ -3,8 +3,8 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum number of messages to keep in memory
 const MAX_MESSAGES: usize = 1000;
@@ -357,12 +357,15 @@ impl Channel {
         }
     }
 
-    /// Get display name for this channel
-    pub fn display_name(&self) -> String {
+    /// Get display name for this channel.
+    ///
+    /// Returns `Cow::Borrowed` for the static Global variant (zero allocation)
+    /// and `Cow::Owned` only when formatting is necessary (O-5).
+    pub fn display_name(&self) -> Cow<'static, str> {
         match &self.channel_type {
-            ChannelType::Global => "# global".to_string(),
-            ChannelType::DirectMessage { other_user } => format!("@ {}", other_user),
-            ChannelType::Group { name, .. } => format!("# {}", name),
+            ChannelType::Global => Cow::Borrowed("# global"),
+            ChannelType::DirectMessage { other_user } => Cow::Owned(format!("@ {}", other_user)),
+            ChannelType::Group { name, .. } => Cow::Owned(format!("# {}", name)),
         }
     }
 }
@@ -382,6 +385,10 @@ pub struct Telemetry {
     pub fps: f64,
     /// Memory usage in bytes
     pub memory_usage: u64,
+    /// Previous message total used to compute per-second delta.
+    /// Stored as an instance field rather than a hidden static so that multiple
+    /// App instances (e.g., in integration tests) don't share a global counter.
+    pub(crate) last_activity_total: u64,
 }
 
 impl Default for Telemetry {
@@ -396,6 +403,7 @@ impl Default for Telemetry {
             network_activity: vec![0; 60], // 60 seconds of history
             fps: 0.0,
             memory_usage: 0,
+            last_activity_total: 0,
         }
     }
 }
@@ -624,20 +632,19 @@ impl App {
 
     /// Add a message to a specific channel
     pub fn add_message_to_channel(&mut self, channel_id: &str, message: ChatMessage) {
-        // Auto-create DM channel if it doesn't exist
+        // Auto-create DM channel if it doesn't exist.
+        // channel_id format: "dm:user1:user2"
         if channel_id.starts_with("dm:") && !self.channels.contains_key(channel_id) {
-            // Extract the other user's name from the channel ID
-            // Format: "dm:user1:user2"
-            let parts: Vec<&str> = channel_id.split(':').collect();
-            if parts.len() == 3 {
-                let other_user = if parts[1] == self.username {
-                    parts[2].to_string()
-                } else {
-                    parts[1].to_string()
-                };
-
-                let channel = Channel::dm(&self.username, other_user);
-                self.channels.insert(channel_id.to_string(), channel);
+            // Iterate directly instead of collecting into a Vec<&str> (W-8).
+            let rest = &channel_id[3..]; // skip "dm:"
+            if let Some(sep) = rest.find(':') {
+                let a = &rest[..sep];
+                let b = &rest[sep + 1..];
+                if !b.is_empty() && !b.contains(':') {
+                    let other_user = if a == self.username { b } else { a };
+                    let channel = Channel::dm(&self.username, other_user.to_string());
+                    self.channels.insert(channel_id.to_string(), channel);
+                }
             }
         }
 
@@ -769,12 +776,13 @@ impl App {
         self.input_cursor = Self::next_char_boundary(&self.input, self.input_cursor);
     }
 
-    /// Get the current input and clear the buffer
+    /// Get the current input and clear the buffer.
+    ///
+    /// Uses `mem::take` to move the buffer out in O(1) without cloning — the
+    /// original `self.input` is replaced with an empty String (no allocation).
     pub fn take_input(&mut self) -> String {
-        let input = self.input.clone();
-        self.input.clear();
         self.input_cursor = 0;
-        input
+        std::mem::take(&mut self.input)
     }
 
     /// Scroll chat up (away from bottom, into history)
@@ -904,15 +912,15 @@ impl App {
 
     /// Update network activity history (call every second)
     pub fn update_network_activity(&mut self) {
-        // Calculate messages in the last second
         let current_total = self.telemetry.messages_sent + self.telemetry.messages_received;
 
-        // Shift history left and add new value
+        // Shift history left and record the per-second delta.
+        // Uses an instance field instead of a hidden process-global static so that
+        // multiple App instances don't corrupt each other's counters (C-4).
         self.telemetry.network_activity.rotate_left(1);
         if let Some(last) = self.telemetry.network_activity.last_mut() {
-            // Store the delta (messages in last second)
-            static LAST_TOTAL: AtomicU64 = AtomicU64::new(0);
-            let prev = LAST_TOTAL.swap(current_total, Ordering::Relaxed);
+            let prev = self.telemetry.last_activity_total;
+            self.telemetry.last_activity_total = current_total;
             *last = current_total.saturating_sub(prev);
         }
     }

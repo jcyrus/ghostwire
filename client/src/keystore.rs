@@ -45,27 +45,33 @@ pub struct PeerSession {
 
 impl PeerSession {
     /// Derive the next send message key without mutating state.
-    pub fn derive_send_key(&self) -> [u8; 32] {
-        let (_, msg_key) = ratchet_chain_key(&self.send_chain);
-        msg_key
+    ///
+    /// Returns `(msg_key, new_chain)`. Pass `new_chain` to [`commit_send`] after
+    /// a successful encrypted send to advance the ratchet in a single HKDF pass.
+    pub fn derive_send_key(&self) -> ([u8; 32], [u8; 32]) {
+        let (new_chain, msg_key) = ratchet_chain_key(&self.send_chain);
+        (msg_key, new_chain)
     }
 
-    /// Commit one step on the send chain after a successful encrypted send.
-    pub fn commit_send(&mut self) {
-        let (new_chain, _) = ratchet_chain_key(&self.send_chain);
+    /// Commit one step on the send chain using the `new_chain` returned by
+    /// [`derive_send_key`]. Avoids a redundant HKDF computation.
+    pub fn commit_send(&mut self, new_chain: [u8; 32]) {
         self.send_chain = new_chain;
         self.send_counter += 1;
     }
 
     /// Derive the next receive message key without mutating state.
-    pub fn derive_recv_key(&self) -> [u8; 32] {
-        let (_, msg_key) = ratchet_chain_key(&self.recv_chain);
-        msg_key
+    ///
+    /// Returns `(msg_key, new_chain)`. Pass `new_chain` to [`commit_recv`] after
+    /// a successful decryption to advance the ratchet in a single HKDF pass.
+    pub fn derive_recv_key(&self) -> ([u8; 32], [u8; 32]) {
+        let (new_chain, msg_key) = ratchet_chain_key(&self.recv_chain);
+        (msg_key, new_chain)
     }
 
-    /// Commit one step on the receive chain after a successful decrypt.
-    pub fn commit_recv(&mut self) {
-        let (new_chain, _) = ratchet_chain_key(&self.recv_chain);
+    /// Commit one step on the receive chain using the `new_chain` returned by
+    /// [`derive_recv_key`]. Avoids a redundant HKDF computation.
+    pub fn commit_recv(&mut self, new_chain: [u8; 32]) {
         self.recv_chain = new_chain;
         self.recv_counter += 1;
     }
@@ -127,14 +133,17 @@ impl SenderKeyState {
     }
 
     /// Derive the next per-message key without mutating state.
-    pub fn derive_message_key(&self) -> [u8; 32] {
-        let (_, msg_key) = ratchet_chain_key(&self.chain_key);
-        msg_key
+    ///
+    /// Returns `(msg_key, new_chain)`. Pass `new_chain` to [`commit`] after
+    /// successful encrypt/decrypt to advance the ratchet without a second HKDF pass.
+    pub fn derive_message_key(&self) -> ([u8; 32], [u8; 32]) {
+        let (new_chain, msg_key) = ratchet_chain_key(&self.chain_key);
+        (msg_key, new_chain)
     }
 
-    /// Commit one ratchet step after successful encrypt/decrypt.
-    pub fn commit(&mut self) {
-        let (new_chain, _) = ratchet_chain_key(&self.chain_key);
+    /// Commit one ratchet step using the `new_chain` returned by
+    /// [`derive_message_key`]. Avoids a redundant HKDF computation.
+    pub fn commit(&mut self, new_chain: [u8; 32]) {
         self.chain_key = new_chain;
         self.counter += 1;
     }
@@ -359,16 +368,20 @@ impl KeyStore {
     }
 
     /// Derive the next group-send key without mutating state.
-    pub fn derive_group_send_key(&self, group_id: &str) -> Option<[u8; 32]> {
+    ///
+    /// Returns `Some((msg_key, new_chain))`. Pass `new_chain` to
+    /// [`commit_group_send`] after a successful encrypted send.
+    pub fn derive_group_send_key(&self, group_id: &str) -> Option<([u8; 32], [u8; 32])> {
         self.our_sender_keys
             .get(group_id)
             .map(|state| state.derive_message_key())
     }
 
-    /// Commit one step on the group-send chain.
-    pub fn commit_group_send(&mut self, group_id: &str) -> bool {
+    /// Commit one step on the group-send chain using the `new_chain` returned
+    /// by [`derive_group_send_key`].
+    pub fn commit_group_send(&mut self, group_id: &str, new_chain: [u8; 32]) -> bool {
         if let Some(state) = self.our_sender_keys.get_mut(group_id) {
-            state.commit();
+            state.commit(new_chain);
             true
         } else {
             false
@@ -410,22 +423,35 @@ impl KeyStore {
     }
 
     /// Derive the next group-receive key without mutating state.
-    pub fn derive_group_recv_key(&self, group_id: &str, sender: &str) -> Option<[u8; 32]> {
+    ///
+    /// Returns `Some((msg_key, new_chain))`. Pass `new_chain` to
+    /// [`commit_group_recv`] after a successful decryption.
+    pub fn derive_group_recv_key(
+        &self,
+        group_id: &str,
+        sender: &str,
+    ) -> Option<([u8; 32], [u8; 32])> {
         self.group_sender_keys
             .get(group_id)
             .and_then(|group| group.get(sender))
             .map(|state| state.derive_message_key())
     }
 
-    /// Commit one step on the group-receive chain.
-    pub fn commit_group_recv(&mut self, group_id: &str, sender: &str) -> bool {
+    /// Commit one step on the group-receive chain using the `new_chain` returned
+    /// by [`derive_group_recv_key`].
+    pub fn commit_group_recv(&mut self, group_id: &str, sender: &str, new_chain: [u8; 32]) -> bool {
         self.group_sender_keys
             .get_mut(group_id)
             .and_then(|group| group.get_mut(sender))
             .map(|state| {
-                state.commit();
+                state.commit(new_chain);
             })
             .is_some()
+    }
+
+    /// Return the number of active peer sessions.
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
     }
 
     /// Check if we have a sender key from a specific member in a group.
@@ -508,10 +534,9 @@ mod tests {
         let alice_session = alice_store.get_session("bob").unwrap();
         let bob_session = bob_store.get_session("alice").unwrap();
 
-        assert_eq!(
-            alice_session.derive_send_key(),
-            bob_session.derive_recv_key()
-        );
+        let (alice_send, _) = alice_session.derive_send_key();
+        let (bob_recv, _) = bob_session.derive_recv_key();
+        assert_eq!(alice_send, bob_recv);
     }
 
     #[test]
@@ -533,15 +558,15 @@ mod tests {
         let alice_session = alice_store.get_session("bob").unwrap();
         let bob_session = bob_store.get_session("alice").unwrap();
 
-        let alice_send_1 = alice_session.derive_send_key();
-        alice_session.commit_send();
-        let alice_send_2 = alice_session.derive_send_key();
-        alice_session.commit_send();
+        let (alice_send_1, new_chain) = alice_session.derive_send_key();
+        alice_session.commit_send(new_chain);
+        let (alice_send_2, new_chain) = alice_session.derive_send_key();
+        alice_session.commit_send(new_chain);
 
-        let bob_recv_1 = bob_session.derive_recv_key();
-        bob_session.commit_recv();
-        let bob_recv_2 = bob_session.derive_recv_key();
-        bob_session.commit_recv();
+        let (bob_recv_1, new_chain) = bob_session.derive_recv_key();
+        bob_session.commit_recv(new_chain);
+        let (bob_recv_2, new_chain) = bob_session.derive_recv_key();
+        bob_session.commit_recv(new_chain);
 
         assert_eq!(alice_session.send_counter, 2);
         assert_eq!(bob_session.recv_counter, 2);

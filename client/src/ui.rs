@@ -119,11 +119,13 @@ fn render_channels(f: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|channel_id| {
             if let Some(channel) = app.channels.get(channel_id) {
-                let display_name = channel.display_name();
+                let display_name = channel.display_name(); // Cow<'static, str>
 
-                // Add unread count if any
-                let content = if channel.unread_count > 0 {
-                    format!("{} ({})", display_name, channel.unread_count)
+                // Add unread count if any.
+                // For unread channels format into an Owned string; otherwise reuse
+                // the Borrowed slice (e.g. "# global" without allocation).
+                let content: std::borrow::Cow<'static, str> = if channel.unread_count > 0 {
+                    std::borrow::Cow::Owned(format!("{} ({})", display_name, channel.unread_count))
                 } else {
                     display_name
                 };
@@ -440,12 +442,12 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" ○ DISCONNECTED ", Style::default().fg(Color::Red))
     };
 
-    // Get active channel display name
+    // Get active channel display name (Cow<'static, str> — no alloc for Global)
     let channel_name = app
         .channels
         .get(&app.active_channel)
         .map(|ch| ch.display_name())
-        .unwrap_or_else(|| "Unknown".to_string());
+        .unwrap_or(std::borrow::Cow::Borrowed("Unknown"));
 
     // Calculate scroll position info
     let total_messages = app.get_total_messages();
