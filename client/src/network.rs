@@ -153,12 +153,12 @@ fn dm_recipient_from_channel(channel_id: &str, local_username: &str) -> Option<S
 
 fn build_key_exchange_message(
     username: &str,
-    public_key_b64: String,
+    public_key_b64: &str,
     recipient: Option<String>,
 ) -> WireMessage {
     WireMessage {
         msg_type: MessageType::KeyExchange,
-        payload: public_key_b64,
+        payload: public_key_b64.to_string(),
         channel: "global".to_string(),
         meta: MessageMeta {
             sender: username.to_string(),
@@ -207,11 +207,14 @@ pub async fn network_task(
 
     tracing::info!(
         "Security audit logging enabled at {:?}",
-        audit_logger.lock().unwrap().log_path()
+        audit_logger
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .log_path()
     );
 
     let identity_fingerprint = {
-        let store = keystore.lock().unwrap();
+        let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
         store.get_identity_fingerprint()
     };
     tracing::info!("Identity fingerprint: {}", identity_fingerprint);
@@ -310,10 +313,10 @@ pub async fn network_task(
 
         // Send key exchange message to announce our public key (v0.3.0)
         let our_public_key = {
-            let store = keystore.lock().unwrap();
+            let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
             store.get_our_public_key()
         };
-        let key_exchange_msg = build_key_exchange_message(&username, our_public_key.clone(), None);
+        let key_exchange_msg = build_key_exchange_message(&username, &our_public_key, None);
 
         if let Ok(json) = serde_json::to_string(&key_exchange_msg)
             && let Err(e) = write.send(Message::Text(json.into())).await
@@ -325,8 +328,9 @@ pub async fn network_task(
         let mut heartbeat = interval(Duration::from_secs(30));
         heartbeat.tick().await; // First tick completes immediately
 
-        // Track ping timestamps for latency measurement
-        let ping_timestamps: Arc<Mutex<HashMap<Vec<u8>, Instant>>> =
+        // Track ping timestamps for latency measurement.
+        // Key is the u64 counter value — avoids a Vec<u8> heap allocation per ping.
+        let ping_timestamps: Arc<Mutex<HashMap<u64, Instant>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let mut ping_counter: u64 = 0;
 
@@ -335,16 +339,16 @@ pub async fn network_task(
             tokio::select! {
                 // Heartbeat - send ping to keep connection alive
                 _ = heartbeat.tick() => {
-                    // Create a unique ping payload with counter
+                    // Create a unique ping payload with counter.
+                    // The counter is the map key (u64, stack-only); the bytes are
+                    // only serialised once for the wire message.
                     ping_counter += 1;
-                    let ping_data = ping_counter.to_le_bytes().to_vec();
+                    ping_timestamps
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(ping_counter, Instant::now());
 
-                    // Store timestamp before sending
-                    if let Ok(mut timestamps) = ping_timestamps.lock() {
-                        timestamps.insert(ping_data.clone(), Instant::now());
-                    }
-
-                    if let Err(e) = write.send(Message::Ping(ping_data.into())).await {
+                    if let Err(e) = write.send(Message::Ping(ping_counter.to_le_bytes().to_vec().into())).await {
                         let _ = event_tx.send(NetworkEvent::Error {
                             message: format!("Failed to send heartbeat: {}", e),
                         });
@@ -352,7 +356,7 @@ pub async fn network_task(
                     }
 
                     let active_sessions = {
-                        let mut store = keystore.lock().unwrap();
+                        let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                         store.cleanup_stale_sessions();
                         store.active_sessions().len()
                     };
@@ -372,13 +376,13 @@ pub async fn network_task(
                                     key_exchange_recipient_for_incoming(&wire_msg, &username)
                                 {
                                     let our_public_key = {
-                                        let store = keystore.lock().unwrap();
+                                        let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                         store.get_our_public_key()
                                     };
 
                                     let targeted_key_exchange = build_key_exchange_message(
                                         &username,
-                                        our_public_key,
+                                        &our_public_key,
                                         Some(recipient.clone()),
                                     );
 
@@ -416,13 +420,19 @@ pub async fn network_task(
                             }
                         }
                         Ok(Message::Pong(data)) => {
-                            // Server responded to our ping - calculate round-trip time
-                            if let Ok(mut timestamps) = ping_timestamps.lock()
-                                && let Some(sent_time) = timestamps.remove(data.as_ref())
+                            // Server responded to our ping - calculate round-trip time.
+                            // Parse the u64 counter key from the 8-byte payload.
+                            if data.len() == 8
+                                && let Ok(key_bytes) = <[u8; 8]>::try_from(data.as_ref())
                             {
-                                let rtt = sent_time.elapsed();
-                                let latency_ms = rtt.as_millis() as u64;
-                                let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
+                                let key = u64::from_le_bytes(key_bytes);
+                                let mut timestamps = ping_timestamps
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                if let Some(sent_time) = timestamps.remove(&key) {
+                                    let latency_ms = sent_time.elapsed().as_millis() as u64;
+                                    let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
+                                }
                             }
                         }
                         Ok(Message::Close(_)) => {
@@ -449,8 +459,10 @@ pub async fn network_task(
                             action,
                             message_id,
                         } => {
-                            let mut pending_dm_commit: Option<String> = None;
-                            let mut pending_group_commit: Option<String> = None;
+                            // Carry the pre-computed new_chain alongside the recipient/group
+                            // so commit_send/commit_group_send don't re-derive via HKDF.
+                            let mut pending_dm_commit: Option<(String, [u8; 32])> = None;
+                            let mut pending_group_commit: Option<(String, [u8; 32])> = None;
 
                             // Determine recipient from channel_id (dm:user1:user2)
                             let recipient = dm_recipient_from_channel(&channel_id, &username);
@@ -458,19 +470,19 @@ pub async fn network_task(
                             // Encrypt direct messages with pairwise session keys.
                             // Encrypt group messages with per-group sender keys.
                             let (payload, encrypted) = if let Some(ref recip) = recipient {
-                                let mut store = keystore.lock().unwrap();
+                                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                 if store.has_session(recip) {
                                     match store.get_session(recip) {
                                         Ok(session) => {
-                                            let msg_key = session.derive_send_key();
+                                            let (msg_key, new_chain) = session.derive_send_key();
                                             match encrypt_message(&content, &msg_key) {
                                                 Ok(encrypted_payload) => {
                                                     tracing::debug!("Encrypted message to {}", recip);
-                                                    audit_logger.lock().unwrap().log(SecurityEvent::MessageEncrypted {
+                                                    audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::MessageEncrypted {
                                                         recipient: recip.clone(),
                                                         message_id: uuid::Uuid::new_v4().to_string(),
                                                     });
-                                                    pending_dm_commit = Some(recip.clone());
+                                                    pending_dm_commit = Some((recip.clone(), new_chain));
                                                     (encrypted_payload, true)
                                                 }
                                                 Err(e) => {
@@ -504,16 +516,16 @@ pub async fn network_task(
                                     continue;
                                 }
                             } else if channel_id.starts_with("group:") {
-                                let store = keystore.lock().unwrap();
-                                if let Some(msg_key) = store.derive_group_send_key(&channel_id) {
+                                let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
+                                if let Some((msg_key, new_chain)) = store.derive_group_send_key(&channel_id) {
                                     match encrypt_message(&content, &msg_key) {
                                         Ok(encrypted_payload) => {
                                             tracing::debug!("Encrypted group message in {}", channel_id);
-                                            audit_logger.lock().unwrap().log(SecurityEvent::MessageEncrypted {
+                                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::MessageEncrypted {
                                                 recipient: channel_id.clone(),
                                                 message_id: uuid::Uuid::new_v4().to_string(),
                                             });
-                                            pending_group_commit = Some(channel_id.clone());
+                                            pending_group_commit = Some((channel_id.clone(), new_chain));
                                             (encrypted_payload, true)
                                         }
                                         Err(e) => {
@@ -564,16 +576,16 @@ pub async fn network_task(
                                         message: format!("Failed to send message: {}", e),
                                     });
                                 } else if encrypted {
-                                    if let Some(recipient_user) = pending_dm_commit {
-                                        let mut store = keystore.lock().unwrap();
+                                    if let Some((recipient_user, new_chain)) = pending_dm_commit {
+                                        let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                         if let Ok(session) = store.get_session(&recipient_user) {
-                                            session.commit_send();
+                                            session.commit_send(new_chain);
                                         }
                                     }
 
-                                    if let Some(group_id) = pending_group_commit {
-                                        let mut store = keystore.lock().unwrap();
-                                        let _ = store.commit_group_send(&group_id);
+                                    if let Some((group_id, new_chain)) = pending_group_commit {
+                                        let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
+                                        let _ = store.commit_group_send(&group_id, new_chain);
                                     }
                                 }
                             }
@@ -604,7 +616,7 @@ pub async fn network_task(
                             }
                         }
                         NetworkCommand::VerifyPeer { username: peer_username } => {
-                            let mut store = keystore.lock().unwrap();
+                            let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                             if store.has_session(&peer_username) {
                                 // Compute a session fingerprint from ephemeral session keys.
                                 let our_pub_bytes = *store.ephemeral.public.as_bytes();
@@ -631,7 +643,7 @@ pub async fn network_task(
                                 });
                             } else {
                                 drop(store);
-                                audit_logger.lock().unwrap().log(SecurityEvent::IdentityVerificationFailed {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::IdentityVerificationFailed {
                                     peer: peer_username.clone(),
                                     reason: format!("No active session with {}", peer_username),
                                 });
@@ -642,7 +654,7 @@ pub async fn network_task(
                             }
                         }
                         NetworkCommand::ConfirmVerification { username: peer_username } => {
-                            let mut store = keystore.lock().unwrap();
+                            let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                             let session_fingerprint = {
                                 let our_pub_bytes = *store.ephemeral.public.as_bytes();
                                 if let Ok(session) = store.get_session(&peer_username) {
@@ -657,7 +669,7 @@ pub async fn network_task(
 
                             if store.verify_peer(&peer_username).is_ok() {
                                 drop(store);
-                                audit_logger.lock().unwrap().log(SecurityEvent::IdentityVerified {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::IdentityVerified {
                                     peer: peer_username.clone(),
                                     safety_number: session_fingerprint
                                         .unwrap_or_else(|| "session fingerprint unavailable".to_string()),
@@ -667,7 +679,7 @@ pub async fn network_task(
                                 });
                             } else {
                                 drop(store);
-                                audit_logger.lock().unwrap().log(SecurityEvent::IdentityVerificationFailed {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::IdentityVerificationFailed {
                                     peer: peer_username.clone(),
                                     reason: format!("No active session with {}", peer_username),
                                 });
@@ -679,37 +691,38 @@ pub async fn network_task(
                         }
                         NetworkCommand::CheckKeyRotation => {
                             let needs_rotation = {
-                                let store = keystore.lock().unwrap();
+                                let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                 store.needs_rotation()
                             };
 
                             if needs_rotation {
-                                let peers_to_rebootstrap = {
-                                    let store = keystore.lock().unwrap();
-                                    store.active_sessions()
+                                // Read session count before clearing, without cloning all keys.
+                                let prior_session_count = {
+                                    let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
+                                    store.session_count()
                                 };
 
                                 {
-                                    let mut store = keystore.lock().unwrap();
+                                    let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                     store.rotate_ephemeral_key();
                                 }
 
                                 // Audit log the rotation
-                                audit_logger.lock().unwrap().log(SecurityEvent::KeyRotated {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(SecurityEvent::KeyRotated {
                                     reason: format!(
                                         "24-hour automatic rotation; {} sessions reset and re-bootstrap initiated",
-                                        peers_to_rebootstrap.len()
+                                        prior_session_count
                                     ),
                                 });
 
                                 // Re-broadcast new public key
                                 let public_key = {
-                                    let store = keystore.lock().unwrap();
+                                    let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                     store.get_our_public_key()
                                 };
 
                                 let msg =
-                                    build_key_exchange_message(&username, public_key.clone(), None);
+                                    build_key_exchange_message(&username, &public_key, None);
 
                                 if let Ok(json) = serde_json::to_string(&msg) {
                                     let _ = write.send(Message::Text(json.into())).await;
@@ -723,7 +736,7 @@ pub async fn network_task(
                         }
                         NetworkCommand::DistributeGroupKey { group_id, members } => {
                             let (key, chain_key) = {
-                                let mut store = keystore.lock().unwrap();
+                                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                 store.get_or_create_sender_key(&group_id)
                             };
                             // Encode key + chain_key together as payload
@@ -734,12 +747,12 @@ pub async fn network_task(
 
                             // Send sender key to each member via the relay
                             for member in &members {
-                                let encrypted_payload = {
-                                    let mut store = keystore.lock().unwrap();
+                                let encrypt_result = {
+                                    let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                     if let Ok(session) = store.get_session(member) {
-                                        let msg_key = session.derive_send_key();
+                                        let (msg_key, new_chain) = session.derive_send_key();
                                         match encrypt_message(&payload, &msg_key) {
-                                            Ok(payload) => Some(payload),
+                                            Ok(encrypted) => Some((encrypted, new_chain)),
                                             Err(e) => {
                                                 tracing::warn!(
                                                     "Failed to encrypt sender key for {}: {}",
@@ -758,7 +771,7 @@ pub async fn network_task(
                                     }
                                 };
 
-                                let Some(encrypted_payload) = encrypted_payload else {
+                                let Some((encrypted_payload, new_chain)) = encrypt_result else {
                                     continue;
                                 };
 
@@ -782,9 +795,9 @@ pub async fn network_task(
                                 if let Ok(json) = serde_json::to_string(&msg)
                                     && write.send(Message::Text(json.into())).await.is_ok()
                                 {
-                                    let mut store = keystore.lock().unwrap();
+                                    let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                     if let Ok(session) = store.get_session(member) {
-                                        session.commit_send();
+                                        session.commit_send(new_chain);
                                     }
                                 }
                             }
@@ -860,9 +873,8 @@ fn handle_wire_message(
 ) {
     match msg.msg_type {
         MessageType::Message => {
-            if let (Some(target_id), Some(emoji)) =
-                (msg.reaction_to.clone(), msg.reaction_emoji.clone())
-            {
+            // msg is owned here — move the Option<String> fields directly (no clone)
+            if let (Some(target_id), Some(emoji)) = (msg.reaction_to, msg.reaction_emoji) {
                 let _ = event_tx.send(NetworkEvent::Reaction {
                     sender: msg.meta.sender,
                     channel_id: msg.channel,
@@ -875,10 +887,10 @@ fn handle_wire_message(
             // Decrypt message if it's encrypted
             let (content, _message_id) = if msg.encrypted {
                 let message_id = uuid::Uuid::new_v4().to_string();
-                let mut store = keystore.lock().unwrap();
+                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                 if msg.channel.starts_with("group:") {
                     if store.has_sender_key(&msg.channel, &msg.meta.sender) {
-                        let Some(msg_key) =
+                        let Some((msg_key, new_chain)) =
                             store.derive_group_recv_key(&msg.channel, &msg.meta.sender)
                         else {
                             return;
@@ -890,7 +902,11 @@ fn handle_wire_message(
                                     msg.meta.sender,
                                     msg.channel
                                 );
-                                let _ = store.commit_group_recv(&msg.channel, &msg.meta.sender);
+                                let _ = store.commit_group_recv(
+                                    &msg.channel,
+                                    &msg.meta.sender,
+                                    new_chain,
+                                );
                                 (plaintext, message_id)
                             }
                             Err(e) => {
@@ -899,13 +915,12 @@ fn handle_wire_message(
                                     msg.meta.sender,
                                     e
                                 );
-                                audit_logger
-                                    .lock()
-                                    .unwrap()
-                                    .log(SecurityEvent::DecryptionFailed {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                    SecurityEvent::DecryptionFailed {
                                         sender: msg.meta.sender.clone(),
                                         reason: e.to_string(),
-                                    });
+                                    },
+                                );
                                 (format!("[Group decryption failed: {}]", e), message_id)
                             }
                         }
@@ -921,49 +936,59 @@ fn handle_wire_message(
                         )
                     }
                 } else if let Ok(session) = store.get_session(&msg.meta.sender) {
+                    // Decode once — used for both the nonce replay check and decryption.
+                    // Avoids a second BASE64 decode pass inside decrypt_message (C-2).
+                    let payload_bytes = match BASE64.decode(&msg.payload) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to decode message from {}: {}",
+                                msg.meta.sender,
+                                e
+                            );
+                            return;
+                        }
+                    };
+
                     // Replay protection: extract nonce and check for duplicates
                     let mut extracted_nonce: Option<[u8; 12]> = None;
-                    let decrypted = {
-                        if let Ok(payload_bytes) = BASE64.decode(&msg.payload)
-                            && payload_bytes.len() >= 12
-                        {
-                            let mut nonce = [0u8; 12];
-                            nonce.copy_from_slice(&payload_bytes[..12]);
-                            if session.nonce_seen(&nonce) {
-                                tracing::warn!("Replay attack detected from {}", msg.meta.sender);
-                                audit_logger
-                                    .lock()
-                                    .unwrap()
-                                    .log(SecurityEvent::ReplayDetected {
-                                        sender: msg.meta.sender.clone(),
-                                        nonce: hex::encode(nonce),
-                                    });
-                                return;
-                            }
-                            extracted_nonce = Some(nonce);
+                    if payload_bytes.len() >= 12 {
+                        let mut nonce = [0u8; 12];
+                        nonce.copy_from_slice(&payload_bytes[..12]);
+                        if session.nonce_seen(&nonce) {
+                            tracing::warn!("Replay attack detected from {}", msg.meta.sender);
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::ReplayDetected {
+                                    sender: msg.meta.sender.clone(),
+                                    nonce: hex::encode(nonce),
+                                },
+                            );
+                            return;
                         }
+                        extracted_nonce = Some(nonce);
+                    }
 
-                        let msg_key = session.derive_recv_key();
-                        decrypt_message(&msg.payload, &msg_key)
-                    };
+                    // Single HKDF pass: derive msg_key and carry new_chain (C-1).
+                    let (msg_key, new_chain) = session.derive_recv_key();
+                    // Decrypt from already-decoded bytes — no second allocation (C-2).
+                    let decrypted = crate::crypto::decrypt_message_bytes(&payload_bytes, &msg_key);
 
                     match decrypted {
                         Ok(plaintext) => {
                             if let Some(nonce) = extracted_nonce {
                                 session.record_nonce(&nonce);
                             }
-                            session.commit_recv();
+                            session.commit_recv(new_chain);
                             tracing::debug!("Decrypted message from {}", msg.meta.sender);
                             store.touch_session(&msg.meta.sender);
 
                             // Audit log
-                            audit_logger
-                                .lock()
-                                .unwrap()
-                                .log(SecurityEvent::MessageDecrypted {
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::MessageDecrypted {
                                     sender: msg.meta.sender.clone(),
                                     message_id: message_id.clone(),
-                                });
+                                },
+                            );
 
                             (plaintext, message_id)
                         }
@@ -975,13 +1000,12 @@ fn handle_wire_message(
                             );
 
                             // Audit log failure
-                            audit_logger
-                                .lock()
-                                .unwrap()
-                                .log(SecurityEvent::DecryptionFailed {
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::DecryptionFailed {
                                     sender: msg.meta.sender.clone(),
                                     reason: e.to_string(),
-                                });
+                                },
+                            );
 
                             (format!("[Decryption failed: {}]", e), message_id)
                         }
@@ -990,15 +1014,14 @@ fn handle_wire_message(
                     tracing::warn!("No session for encrypted message from {}", msg.meta.sender);
 
                     // Audit log
-                    audit_logger
-                        .lock()
-                        .unwrap()
-                        .log(SecurityEvent::SecurityWarning {
+                    audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                        SecurityEvent::SecurityWarning {
                             message: format!(
                                 "Received encrypted message from {} without session",
                                 msg.meta.sender
                             ),
-                        });
+                        },
+                    );
 
                     ("[No encryption session]".to_string(), message_id)
                 }
@@ -1060,7 +1083,7 @@ fn handle_wire_message(
             let their_username = msg.meta.sender.clone();
             let their_public_key = msg.payload.clone();
 
-            let mut store = keystore.lock().unwrap();
+            let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
 
             // Store their public key
             if let Err(e) = store.store_peer_public_key(&their_username, &their_public_key) {
@@ -1077,13 +1100,12 @@ fn handle_wire_message(
             tracing::info!("✓ Established E2EE session with {}", their_username);
 
             // Audit log session establishment
-            audit_logger
-                .lock()
-                .unwrap()
-                .log(SecurityEvent::SessionEstablished {
+            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                SecurityEvent::SessionEstablished {
                     peer: their_username.clone(),
-                    public_key_fingerprint: their_public_key[..16].to_string(), // First 16 chars as fingerprint
-                });
+                    public_key_fingerprint: their_public_key[..16].to_string(),
+                },
+            );
 
             // Notify UI layer
             let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {
@@ -1102,7 +1124,7 @@ fn handle_wire_message(
 
             // Receive a sender key distribution for group encryption
             let payload_b64 = if msg.encrypted {
-                let mut store = keystore.lock().unwrap();
+                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                 let Ok(session) = store.get_session(&msg.meta.sender) else {
                     tracing::warn!(
                         "Ignoring encrypted sender key from {} without active session",
@@ -1111,10 +1133,10 @@ fn handle_wire_message(
                     return;
                 };
 
-                let msg_key = session.derive_recv_key();
+                let (msg_key, new_chain) = session.derive_recv_key();
                 match decrypt_message(&msg.payload, &msg_key) {
                     Ok(plaintext) => {
-                        session.commit_recv();
+                        session.commit_recv(new_chain);
                         plaintext
                     }
                     Err(e) => {
@@ -1143,7 +1165,7 @@ fn handle_wire_message(
                 key.copy_from_slice(&payload_bytes[..32]);
                 chain_key.copy_from_slice(&payload_bytes[32..]);
 
-                let mut store = keystore.lock().unwrap();
+                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                 store.store_sender_key(&msg.channel, &msg.meta.sender, key, chain_key);
                 drop(store);
 
@@ -1175,13 +1197,18 @@ fn format_session_fingerprint(our_pub_bytes: [u8; 32], their_pub_bytes: [u8; 32]
     }
     let hash = hasher.finalize();
 
+    // 30 hex chars grouped into 6 blocks of 5, separated by spaces (35 chars total).
+    // Build directly into a pre-sized String — avoids the intermediate Vec<&str>.
     let hex_str = hex::encode(&hash[..15]);
-    hex_str
-        .as_bytes()
-        .chunks(5)
-        .map(|c| std::str::from_utf8(c).unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut result = String::with_capacity(35);
+    for (i, chunk) in hex_str.as_bytes().chunks(5).enumerate() {
+        if i > 0 {
+            result.push(' ');
+        }
+        // SAFETY: hex::encode output is always ASCII
+        result.push_str(unsafe { std::str::from_utf8_unchecked(chunk) });
+    }
+    result
 }
 
 #[cfg(test)]

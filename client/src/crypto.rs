@@ -118,23 +118,29 @@ pub fn encrypt_message(plaintext: &str, key: &[u8; 32]) -> Result<String> {
 }
 
 /// Decrypt a message using ChaCha20-Poly1305
+///
+/// Decodes the base64 payload then delegates to [`decrypt_message_bytes`].
 pub fn decrypt_message(ciphertext_b64: &str, key: &[u8; 32]) -> Result<String> {
-    let cipher = ChaCha20Poly1305::new(key.into());
-
-    // Base64 decode
     let payload = BASE64
         .decode(ciphertext_b64)
         .map_err(|e| anyhow!("Base64 decode failed: {}", e))?;
+    decrypt_message_bytes(&payload, key)
+}
 
-    // Extract nonce (first 12 bytes)
+/// Decrypt from an already-decoded `nonce || ciphertext` byte slice.
+///
+/// Callers that have already base64-decoded the payload (e.g. for a prior
+/// nonce-replay check) should call this directly to avoid a second allocation
+/// and decode pass.
+pub fn decrypt_message_bytes(payload: &[u8], key: &[u8; 32]) -> Result<String> {
     if payload.len() < 12 {
         return Err(anyhow!("Invalid ciphertext: too short"));
     }
 
+    let cipher = ChaCha20Poly1305::new(key.into());
     let (nonce_bytes, ciphertext) = payload.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    // Decrypt
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
         .map_err(|e| anyhow!("Decryption failed: {}", e))?;

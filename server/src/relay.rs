@@ -4,7 +4,10 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures::{stream::StreamExt, SinkExt};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -23,10 +26,14 @@ pub struct BroadcastMessage {
 /// Shared state for the relay server
 #[derive(Clone)]
 pub struct RelayState {
-    /// Map of client IDs to their broadcast channels
-    clients: Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<String>>>>,
-    /// Counter for generating unique client IDs
-    next_client_id: Arc<RwLock<ClientId>>,
+    /// Map of client IDs to their broadcast channels.
+    /// Uses `Arc<str>` so broadcast() creates a single refcounted copy instead
+    /// of cloning the String once per recipient.
+    clients: Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<Arc<str>>>>>,
+    /// Monotonic counter for unique client IDs.
+    /// AtomicUsize replaces Arc<RwLock<usize>> — a single fetch_add instruction
+    /// vs. a full async lock acquisition.
+    next_client_id: Arc<AtomicUsize>,
 }
 
 impl RelayState {
@@ -34,45 +41,41 @@ impl RelayState {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
-            next_client_id: Arc::new(RwLock::new(0)),
+            next_client_id: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    /// Get the next available client ID
-    async fn next_id(&self) -> ClientId {
-        let mut id = self.next_client_id.write().await;
-        let current = *id;
-        *id += 1;
-        current
+    /// Get the next available client ID (lock-free).
+    fn next_id(&self) -> ClientId {
+        self.next_client_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Register a new client and return their ID and receiver
-    async fn register_client(&self) -> (ClientId, mpsc::UnboundedReceiver<String>) {
-        let id = self.next_id().await;
+    /// Register a new client and return their ID and receiver.
+    /// Holds the write lock only once, reading `.len()` from the held guard.
+    async fn register_client(&self) -> (ClientId, mpsc::UnboundedReceiver<Arc<str>>) {
+        let id = self.next_id();
         let (tx, rx) = mpsc::unbounded_channel();
 
-        self.clients.write().await.insert(id, tx);
-        info!(
-            "Client {} connected. Total clients: {}",
-            id,
-            self.clients.read().await.len()
-        );
+        let mut clients = self.clients.write().await;
+        clients.insert(id, tx);
+        info!("Client {} connected. Total clients: {}", id, clients.len());
 
         (id, rx)
     }
 
-    /// Unregister a client
+    /// Unregister a client.
+    /// Holds the write lock only once, reading `.len()` from the held guard.
     async fn unregister_client(&self, id: ClientId) {
-        self.clients.write().await.remove(&id);
-        info!(
-            "Client {} disconnected. Total clients: {}",
-            id,
-            self.clients.read().await.len()
-        );
+        let mut clients = self.clients.write().await;
+        clients.remove(&id);
+        info!("Client {} disconnected. Total clients: {}", id, clients.len());
     }
 
-    /// Broadcast a message to all clients except the sender
+    /// Broadcast a message to all clients except the sender.
+    /// Builds one `Arc<str>` and sends refcount increments — O(1) allocation
+    /// regardless of connected client count.
     async fn broadcast(&self, msg: BroadcastMessage) {
+        let shared: Arc<str> = Arc::from(msg.content.as_str());
         let clients = self.clients.read().await;
         let mut failed_clients = Vec::new();
 
@@ -82,8 +85,8 @@ impl RelayState {
                 continue;
             }
 
-            // Try to send, track failures
-            if let Err(e) = tx.send(msg.content.clone()) {
+            // Arc::clone is just an atomic refcount increment
+            if let Err(e) = tx.send(Arc::clone(&shared)) {
                 warn!("Failed to send to client {}: {}", client_id, e);
                 failed_clients.push(client_id);
             }
@@ -130,9 +133,11 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
                     }
                 }
 
-                // Forward broadcast messages
+                // Forward broadcast messages.
+                // msg is Arc<str>; allocate the String here (unavoidable for WS send),
+                // but the channel itself held only a refcount, not a full copy.
                 Some(msg) = broadcast_rx.recv() => {
-                    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                    if ws_tx.send(Message::Text((*msg).to_owned().into())).await.is_err() {
                         // Client disconnected
                         break;
                     }
@@ -152,7 +157,9 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
                 Ok(Message::Text(text)) => {
                     debug!("Client {} sent: {} bytes", client_id, text.len());
 
-                    // Broadcast to all other clients
+                    // Broadcast to all other clients.
+                    // text is Utf8Bytes (axum 0.8); .to_string() is the required conversion.
+                    // The broadcast() itself avoids N-1 further clones via Arc<str>.
                     state_clone
                         .broadcast(BroadcastMessage {
                             from: client_id,
