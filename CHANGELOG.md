@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-03
+
+### Fixed
+
+- Heartbeat ping and pong RTT paths now recover from a poisoned `ping_timestamps` mutex via `unwrap_or_else(|e| e.into_inner())` instead of silently dropping the operation, keeping latency tracking deterministic after a panic in another thread.
+- Group-message decrypt error branch no longer calls `audit_logger.lock().unwrap()` — a poisoned audit logger no longer panics the network task.
+- DM channel auto-creation in `add_message_to_channel` now inserts under the canonical `Channel.id` produced by `Channel::dm()` (which sorts usernames) rather than the raw incoming `channel_id`, preventing duplicate DM channels and key/id mismatches for non-canonical IDs like `dm:bob:alice`. Added missing non-empty validation for both username segments.
+
 ## [0.5.1] - 2026-03-08
 
 ### Fixed
