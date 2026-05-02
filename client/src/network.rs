@@ -207,7 +207,10 @@ pub async fn network_task(
 
     tracing::info!(
         "Security audit logging enabled at {:?}",
-        audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log_path()
+        audit_logger
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .log_path()
     );
 
     let identity_fingerprint = {
@@ -340,9 +343,10 @@ pub async fn network_task(
                     // The counter is the map key (u64, stack-only); the bytes are
                     // only serialised once for the wire message.
                     ping_counter += 1;
-                    if let Ok(mut timestamps) = ping_timestamps.lock() {
-                        timestamps.insert(ping_counter, Instant::now());
-                    }
+                    ping_timestamps
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(ping_counter, Instant::now());
 
                     if let Err(e) = write.send(Message::Ping(ping_counter.to_le_bytes().to_vec().into())).await {
                         let _ = event_tx.send(NetworkEvent::Error {
@@ -418,11 +422,13 @@ pub async fn network_task(
                         Ok(Message::Pong(data)) => {
                             // Server responded to our ping - calculate round-trip time.
                             // Parse the u64 counter key from the 8-byte payload.
-                            if let Ok(mut timestamps) = ping_timestamps.lock()
-                                && data.len() == 8
+                            if data.len() == 8
                                 && let Ok(key_bytes) = <[u8; 8]>::try_from(data.as_ref())
                             {
                                 let key = u64::from_le_bytes(key_bytes);
+                                let mut timestamps = ping_timestamps
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
                                 if let Some(sent_time) = timestamps.remove(&key) {
                                     let latency_ms = sent_time.elapsed().as_millis() as u64;
                                     let _ = event_tx.send(NetworkEvent::LatencyUpdate { latency_ms });
@@ -868,8 +874,7 @@ fn handle_wire_message(
     match msg.msg_type {
         MessageType::Message => {
             // msg is owned here — move the Option<String> fields directly (no clone)
-            if let (Some(target_id), Some(emoji)) = (msg.reaction_to, msg.reaction_emoji)
-            {
+            if let (Some(target_id), Some(emoji)) = (msg.reaction_to, msg.reaction_emoji) {
                 let _ = event_tx.send(NetworkEvent::Reaction {
                     sender: msg.meta.sender,
                     channel_id: msg.channel,
@@ -897,7 +902,11 @@ fn handle_wire_message(
                                     msg.meta.sender,
                                     msg.channel
                                 );
-                                let _ = store.commit_group_recv(&msg.channel, &msg.meta.sender, new_chain);
+                                let _ = store.commit_group_recv(
+                                    &msg.channel,
+                                    &msg.meta.sender,
+                                    new_chain,
+                                );
                                 (plaintext, message_id)
                             }
                             Err(e) => {
@@ -906,13 +915,12 @@ fn handle_wire_message(
                                     msg.meta.sender,
                                     e
                                 );
-                                audit_logger
-                                    .lock()
-                                    .unwrap()
-                                    .log(SecurityEvent::DecryptionFailed {
+                                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                    SecurityEvent::DecryptionFailed {
                                         sender: msg.meta.sender.clone(),
                                         reason: e.to_string(),
-                                    });
+                                    },
+                                );
                                 (format!("[Group decryption failed: {}]", e), message_id)
                             }
                         }
@@ -935,7 +943,8 @@ fn handle_wire_message(
                         Err(e) => {
                             tracing::error!(
                                 "Failed to decode message from {}: {}",
-                                msg.meta.sender, e
+                                msg.meta.sender,
+                                e
                             );
                             return;
                         }
@@ -948,13 +957,12 @@ fn handle_wire_message(
                         nonce.copy_from_slice(&payload_bytes[..12]);
                         if session.nonce_seen(&nonce) {
                             tracing::warn!("Replay attack detected from {}", msg.meta.sender);
-                            audit_logger
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .log(SecurityEvent::ReplayDetected {
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::ReplayDetected {
                                     sender: msg.meta.sender.clone(),
                                     nonce: hex::encode(nonce),
-                                });
+                                },
+                            );
                             return;
                         }
                         extracted_nonce = Some(nonce);
@@ -975,13 +983,12 @@ fn handle_wire_message(
                             store.touch_session(&msg.meta.sender);
 
                             // Audit log
-                            audit_logger
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .log(SecurityEvent::MessageDecrypted {
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::MessageDecrypted {
                                     sender: msg.meta.sender.clone(),
                                     message_id: message_id.clone(),
-                                });
+                                },
+                            );
 
                             (plaintext, message_id)
                         }
@@ -993,13 +1000,12 @@ fn handle_wire_message(
                             );
 
                             // Audit log failure
-                            audit_logger
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .log(SecurityEvent::DecryptionFailed {
+                            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                                SecurityEvent::DecryptionFailed {
                                     sender: msg.meta.sender.clone(),
                                     reason: e.to_string(),
-                                });
+                                },
+                            );
 
                             (format!("[Decryption failed: {}]", e), message_id)
                         }
@@ -1008,15 +1014,14 @@ fn handle_wire_message(
                     tracing::warn!("No session for encrypted message from {}", msg.meta.sender);
 
                     // Audit log
-                    audit_logger
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .log(SecurityEvent::SecurityWarning {
+                    audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                        SecurityEvent::SecurityWarning {
                             message: format!(
                                 "Received encrypted message from {} without session",
                                 msg.meta.sender
                             ),
-                        });
+                        },
+                    );
 
                     ("[No encryption session]".to_string(), message_id)
                 }
@@ -1095,13 +1100,12 @@ fn handle_wire_message(
             tracing::info!("✓ Established E2EE session with {}", their_username);
 
             // Audit log session establishment
-            audit_logger
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .log(SecurityEvent::SessionEstablished {
+            audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                SecurityEvent::SessionEstablished {
                     peer: their_username.clone(),
                     public_key_fingerprint: their_public_key[..16].to_string(),
-                });
+                },
+            );
 
             // Notify UI layer
             let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {

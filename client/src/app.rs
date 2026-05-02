@@ -632,6 +632,10 @@ impl App {
 
     /// Add a message to a specific channel
     pub fn add_message_to_channel(&mut self, channel_id: &str, message: ChatMessage) {
+        // Canonical channel ID to use for map key and unread comparison.
+        // May differ from the raw incoming channel_id when the DM ID is non-canonical.
+        let mut target_channel_id = channel_id.to_string();
+
         // Auto-create DM channel if it doesn't exist.
         // channel_id format: "dm:user1:user2"
         if channel_id.starts_with("dm:") && !self.channels.contains_key(channel_id) {
@@ -640,19 +644,26 @@ impl App {
             if let Some(sep) = rest.find(':') {
                 let a = &rest[..sep];
                 let b = &rest[sep + 1..];
-                if !b.is_empty() && !b.contains(':') {
+                // Validate both parts are non-empty and there is no third segment.
+                if !a.is_empty() && !b.is_empty() && !b.contains(':') {
                     let other_user = if a == self.username { b } else { a };
                     let channel = Channel::dm(&self.username, other_user.to_string());
-                    self.channels.insert(channel_id.to_string(), channel);
+                    // Insert under the canonical ID produced by Channel::dm so that
+                    // Channel.id always matches its HashMap key (fixes key/id mismatch
+                    // when an incoming non-canonical ID like "dm:bob:alice" is received).
+                    target_channel_id = channel.id.clone();
+                    self.channels
+                        .entry(target_channel_id.clone())
+                        .or_insert(channel);
                 }
             }
         }
 
-        if let Some(channel) = self.channels.get_mut(channel_id) {
+        if let Some(channel) = self.channels.get_mut(&target_channel_id) {
             channel.add_message(message);
 
             // Increment unread count if not active channel
-            if channel_id != self.active_channel {
+            if target_channel_id != self.active_channel {
                 channel.unread_count += 1;
             } else {
                 // Auto-scroll to bottom only if already at/near bottom (within 5 messages)
