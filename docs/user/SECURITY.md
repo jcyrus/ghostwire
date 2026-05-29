@@ -1,7 +1,7 @@
 # GhostWire Security Model
 
-**Version**: v0.4.0
-**Last Updated**: March 8, 2026
+**Version**: v0.5.2
+**Last Updated**: May 29, 2026
 **Status**: Released security model
 
 ---
@@ -282,11 +282,11 @@ safety_number = SHA256(your_public_key || their_public_key)
 3. If match: Mark peer as "verified"
 4. Client shows 🔒 (verified) vs 🔓 (unverified)
 
-**Command** (planned):
+**Commands** (implemented):
 
-```bash
-ghostwire --verify alice
-# Shows: Safety Number: 1234 5678 9012 3456
+```text
+/verify alice    # Shows the safety number to compare out-of-band
+/confirm alice   # Marks the peer as verified after you've compared
 ```
 
 ---
@@ -300,25 +300,31 @@ ghostwire --verify alice
 - Ephemeral X25519 keys (not long-term)
 - Key rotation every 24 hours
 - Keys never stored on disk
+- **Symmetric chain ratchet** — each DM session advances a send/receive
+  chain (`ratchet_chain_key`), so every message uses a fresh message key
+  derived from the chain key
 
 **Not Yet Implemented**:
 
-- **Double Ratchet** (like Signal)
-- Per-message keys
-- Automatic ratcheting on each message
+- **DH Double Ratchet** (like Signal) — there is no per-message
+  Diffie-Hellman step, so GhostWire does **not** yet provide
+  post-compromise security (a leaked chain key compromises subsequent
+  messages until the next 24-hour ephemeral rotation)
+- Key-change detection (warning the user when a peer's identity key changes)
 
-### Roadmap: v0.4.0
+### Roadmap: full DH Double Ratchet
 
-Implement **Double Ratchet Algorithm**:
+The current symmetric ratchet gives unique per-message keys but not
+post-compromise security. A future release would add the DH step so the
+chain self-heals after a key compromise:
 
 ```
-Chain Key ----> Message Key 1
-        |-----> Message Key 2
-        |-----> Message Key 3
-        ...
+DH ratchet step ──► new root key ──► new sending chain
+                                       │
+        Chain Key ──► Message Key 1    │ (advances per message)
+                ╰───► Message Key 2    │
+                ╰───► Message Key 3    ▼
 ```
-
-Each message uses a different key derived from the chain key.
 
 ---
 
@@ -361,7 +367,7 @@ Each message uses a different key derived from the chain key.
    - Compare with your contact out-of-band
    - Watch for warnings if keys change
 
-2. **Use Self-Destruct for Sensitive Messages** (future)
+2. **Use Self-Destruct for Sensitive Messages**
 
    ```
    /expire 300  (5 minutes)
@@ -471,7 +477,7 @@ We follow **responsible disclosure**:
 - [x] Safety number verification UI
 - [x] Self-destruct UI command (`/expire <seconds>`)
 - [x] Key rotation trigger activation
-- [x] Per-message keys (Double Ratchet)
+- [x] Per-message keys (symmetric chain ratchet — _not_ full DH Double Ratchet)
 - [x] Replay protection (nonce tracking)
 - [x] Group message encryption (sender keys)
 

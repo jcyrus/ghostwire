@@ -32,7 +32,7 @@ pub struct EphemeralKeypair {
 pub struct SessionKeys {
     pub encryption_key: [u8; 32],
     pub mac_key: [u8; 32],
-    pub chain_key: [u8; 32], // For forward secrecy (Double Ratchet)
+    pub chain_key: [u8; 32], // Symmetric chain ratchet (per-message FS; not a DH double ratchet)
 }
 
 impl Drop for SessionKeys {
