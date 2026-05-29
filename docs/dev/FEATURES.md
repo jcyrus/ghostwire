@@ -275,6 +275,9 @@ Direct Client-to-Client file transfers will reuse the existing ChaCha20-Poly1305
 
 - Each DM session now maintains send and receive chains
 - Every encrypted send/receive advances its respective chain and derives a fresh message key
+- **Scope**: this is a _symmetric_ chain ratchet (HKDF per message), not the full
+  Signal DH Double Ratchet — there is no per-message Diffie-Hellman step, so it does
+  not yet provide post-compromise security. See `docs/user/SECURITY.md` (Forward Secrecy).
 
 ### Group Message Encryption
 
