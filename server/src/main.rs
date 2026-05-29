@@ -28,7 +28,11 @@ async fn root(State(state): State<RelayState>, headers: HeaderMap) -> Html<Strin
 
 /// WebSocket upgrade handler
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<RelayState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| relay::handle_websocket(socket, state))
+    // Enforce the frame-size cap at the protocol layer; handle_websocket also
+    // guards relay::MAX_MESSAGE_BYTES as defense in depth.
+    ws.max_message_size(relay::MAX_MESSAGE_BYTES)
+        .max_frame_size(relay::MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| relay::handle_websocket(socket, state))
 }
 
 /// Redirect to the install script
