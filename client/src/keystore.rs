@@ -2,10 +2,10 @@
 // Manages ephemeral encryption keys with automatic rotation
 
 use crate::crypto::{
-    EphemeralKeypair, IdentityKeypair, compute_safety_number, decode_public_key,
-    decode_verifying_key, derive_session_keys, encode_public_key, encode_verifying_key,
-    fingerprint_public_key, generate_ephemeral_keypair, generate_identity_keypair,
-    ratchet_chain_key, sign_message, verify_signature,
+    EphemeralKeypair, IdentityKeypair, compute_safety_number, decode_verifying_key,
+    derive_session_keys, encode_public_key, encode_verifying_key, fingerprint_public_key,
+    generate_ephemeral_keypair, generate_identity_keypair, ratchet_chain_key, sign_message,
+    verify_signature,
 };
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Utc};
@@ -289,7 +289,7 @@ impl KeyStore {
     /// handler and calls [`store_peer_public_key_decoded`] directly.
     #[cfg(test)]
     pub fn store_peer_public_key(&mut self, username: &str, public_key_b64: &str) -> Result<()> {
-        let public_key = decode_public_key(public_key_b64)?;
+        let public_key = crate::crypto::decode_public_key(public_key_b64)?;
         self.store_peer_public_key_decoded(username, public_key);
         Ok(())
     }

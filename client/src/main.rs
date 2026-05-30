@@ -668,6 +668,14 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
         NetworkEvent::SystemMessage { content } => {
             app.add_message(ChatMessage::system(content));
         }
+        NetworkEvent::SecurityAlert { content } => {
+            // Loud security warning (e.g. verified-peer key change): render as a
+            // Warning, not the quiet cyan Info that `ChatMessage::system` uses.
+            app.add_message(ChatMessage::system_with_severity(
+                content,
+                app::MessageSeverity::Warning,
+            ));
+        }
         NetworkEvent::Error { message } => {
             // Parse error and create user-friendly message
             let user_error = errors::parse_error(&message);
