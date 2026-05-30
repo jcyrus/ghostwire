@@ -212,6 +212,14 @@ pub struct KeyStore {
     /// FIFO insertion order of `known_peer_keys` usernames, used to evict the
     /// oldest entry once `MAX_KNOWN_PEER_KEYS` is reached.
     known_peer_order: VecDeque<String>,
+
+    /// Usernames the user has verified (safety number confirmed). Tracked
+    /// separately from `PeerSession.verified` so it survives `clear_all_sessions`
+    /// / our own 24h rotation — otherwise a previously-verified peer whose key
+    /// later changes would be reported as unverified and the loud warning
+    /// suppressed. Cleared for a peer when that peer's key changes (the new key
+    /// is not verified).
+    verified_peers: HashSet<String>,
 }
 
 impl KeyStore {
@@ -240,6 +248,7 @@ impl KeyStore {
             group_sender_keys: HashMap::new(),
             known_peer_keys: HashMap::new(),
             known_peer_order: VecDeque::new(),
+            verified_peers: HashSet::new(),
         }
     }
 
@@ -274,7 +283,11 @@ impl KeyStore {
         self.group_sender_keys.clear();
     }
 
-    /// Store a peer's public key from key exchange message
+    /// Store a peer's public key from a base64 key-exchange payload.
+    ///
+    /// Test-only convenience: production code decodes once in the KEY_EXCHANGE
+    /// handler and calls [`store_peer_public_key_decoded`] directly.
+    #[cfg(test)]
     pub fn store_peer_public_key(&mut self, username: &str, public_key_b64: &str) -> Result<()> {
         let public_key = decode_public_key(public_key_b64)?;
         self.store_peer_public_key_decoded(username, public_key);
@@ -325,6 +338,10 @@ impl KeyStore {
             their_public_key: *their_public,
             created_at: now,
             last_message_at: now,
+            // A freshly (re-)established session starts unverified; the badge is
+            // re-earned via `/verify`. Persistent verification (`verified_peers`)
+            // is kept only to drive the key-change warning, not the live badge,
+            // because the safety number depends on the (rotating) ephemeral key.
             verified: false,
             send_chain,
             recv_chain,
@@ -361,6 +378,9 @@ impl KeyStore {
             .ok_or_else(|| anyhow!("No session with peer: {}", username))?;
 
         session.verified = true;
+        // Record verification persistently so it survives session clears / our
+        // own ephemeral rotation (see `verified_peers`).
+        self.verified_peers.insert(username.to_string());
         tracing::info!("Verified identity of peer: {}", username);
         Ok(())
     }
@@ -391,7 +411,12 @@ impl KeyStore {
             Some(existing) => {
                 let old_fingerprint = fingerprint_public_key(existing);
                 let new_fingerprint = fingerprint_public_key(new_key);
-                let was_verified = self.is_verified(username);
+                // Read persistent verification (survives session clears), captured
+                // before we invalidate it below.
+                let was_verified = self.verified_peers.contains(username);
+
+                // The new key invalidates any prior verification.
+                self.verified_peers.remove(username);
 
                 // Adopt the new key as the baseline so we warn once per change,
                 // not on every subsequent message from the new key. The username
@@ -730,6 +755,47 @@ mod tests {
         match alice.track_peer_key("bob", &attacker_pub) {
             KeyChange::Changed { was_verified, .. } => {
                 assert!(was_verified, "must report that bob had been verified");
+            }
+            other => panic!("expected Changed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_verification_survives_rotation_for_warning() {
+        // Regression for PR #9 review: a peer verified before our own rotation
+        // must still trigger the loud "verified peer" warning if their key later
+        // changes, even though rotation cleared the live session.
+        let mut alice = KeyStore::new();
+        let bob_pub_b64 = KeyStore::new().get_our_public_key();
+        let bob_pub = crate::crypto::decode_public_key(&bob_pub_b64).unwrap();
+
+        alice.track_peer_key("bob", &bob_pub);
+        alice.store_peer_public_key("bob", &bob_pub_b64).unwrap();
+        alice.establish_session("bob").unwrap();
+        alice.verify_peer("bob").unwrap();
+
+        // Our 24h rotation clears sessions (and the live verified badge)…
+        alice.rotate_ephemeral_key();
+        assert!(!alice.is_verified("bob"), "rotation clears the live session badge");
+
+        // …but a subsequent key change for bob must still be flagged as a
+        // previously-verified peer (the warning must not be suppressed).
+        let attacker_pub = peer_pubkey();
+        match alice.track_peer_key("bob", &attacker_pub) {
+            KeyChange::Changed { was_verified, .. } => {
+                assert!(
+                    was_verified,
+                    "verification must persist across rotation for the warning decision"
+                );
+            }
+            other => panic!("expected Changed, got {other:?}"),
+        }
+
+        // Adopting the changed key clears persistent verification.
+        let third_pub = peer_pubkey();
+        match alice.track_peer_key("bob", &third_pub) {
+            KeyChange::Changed { was_verified, .. } => {
+                assert!(!was_verified, "a changed key must drop prior verification");
             }
             other => panic!("expected Changed, got {other:?}"),
         }

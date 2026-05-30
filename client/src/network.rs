@@ -51,6 +51,10 @@ pub enum NetworkEvent {
     /// System message
     SystemMessage { content: String },
 
+    /// Security alert — like a system message but surfaced as a loud Warning in
+    /// the UI (used for verified-peer key changes).
+    SecurityAlert { content: String },
+
     /// Error occurred
     Error { message: String },
 
@@ -1129,44 +1133,48 @@ fn handle_wire_message(
             // warning (verification no longer applies to the new key); a change
             // to an unverified peer is routine (likely the 24h ephemeral
             // rotation) and is audit-logged only — no UI spam.
-            if let KeyChange::Changed {
-                was_verified: true,
-                old_fingerprint,
-                new_fingerprint,
-            } = &key_change
-            {
-                let message = format!(
-                    "⚠️ SECURITY: {}'s key changed ({}… → {}…) — their previous identity was VERIFIED. \
-                     This happens on key rotation, but if unexpected it may indicate impersonation. \
-                     Re-verify with /verify {}.",
-                    their_username, old_fingerprint, new_fingerprint, their_username
-                );
-                audit_logger
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .log(SecurityEvent::SecurityWarning {
-                        message: message.clone(),
-                    });
-                let _ = event_tx.send(NetworkEvent::SystemMessage { content: message });
-            } else if let KeyChange::Changed {
-                was_verified: false,
-                old_fingerprint,
-                new_fingerprint,
-            } = &key_change
-            {
-                // Routine for an unverified peer (likely 24h rotation): audit only.
-                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
-                    SecurityEvent::SecurityWarning {
-                        message: format!(
-                            "{}'s key changed ({}… → {}…); peer was not verified (likely key rotation).",
-                            their_username, old_fingerprint, new_fingerprint
-                        ),
-                    },
-                );
-                tracing::info!(
-                    "Peer {} key changed (unverified; likely rotation)",
-                    their_username
-                );
+            match &key_change {
+                KeyChange::Changed {
+                    was_verified: true,
+                    old_fingerprint,
+                    new_fingerprint,
+                } => {
+                    let message = format!(
+                        "⚠️ SECURITY: {}'s key changed ({}… → {}…) — their previous identity was VERIFIED. \
+                         This happens on key rotation, but if unexpected it may indicate impersonation. \
+                         Re-verify with /verify {}.",
+                        their_username, old_fingerprint, new_fingerprint, their_username
+                    );
+                    audit_logger
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .log(SecurityEvent::SecurityWarning {
+                            message: message.clone(),
+                        });
+                    // Route through SecurityAlert so the UI renders it as a loud
+                    // Warning, not a quiet cyan info line.
+                    let _ = event_tx.send(NetworkEvent::SecurityAlert { content: message });
+                }
+                KeyChange::Changed {
+                    was_verified: false,
+                    old_fingerprint,
+                    new_fingerprint,
+                } => {
+                    // Routine for an unverified peer (likely 24h rotation): audit only.
+                    audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                        SecurityEvent::SecurityWarning {
+                            message: format!(
+                                "{}'s key changed ({}… → {}…); peer was not verified (likely key rotation).",
+                                their_username, old_fingerprint, new_fingerprint
+                            ),
+                        },
+                    );
+                    tracing::info!(
+                        "Peer {} key changed (unverified; likely rotation)",
+                        their_username
+                    );
+                }
+                KeyChange::FirstSeen | KeyChange::Unchanged => {}
             }
 
             // Notify UI layer
