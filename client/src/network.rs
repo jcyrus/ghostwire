@@ -3,7 +3,7 @@
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
 use crate::crypto::{decrypt_message, encrypt_message};
-use crate::keystore::KeyStore;
+use crate::keystore::{KeyChange, KeyStore};
 use crate::security_audit::{SecurityAuditLogger, SecurityEvent};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{SinkExt, StreamExt};
@@ -1085,6 +1085,12 @@ fn handle_wire_message(
 
             let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
 
+            // Detect a key change (TOFU) BEFORE the session is replaced, so the
+            // verification state we read reflects the prior session.
+            let key_change = store
+                .track_peer_key(&their_username, &their_public_key)
+                .ok();
+
             // Store their public key
             if let Err(e) = store.store_peer_public_key(&their_username, &their_public_key) {
                 tracing::error!("Failed to store public key from {}: {}", their_username, e);
@@ -1106,6 +1112,50 @@ fn handle_wire_message(
                     public_key_fingerprint: their_public_key[..16].to_string(),
                 },
             );
+
+            // Surface key changes. A change to a *verified* peer is a serious
+            // warning (verification no longer applies to the new key); a change
+            // to an unverified peer is routine (likely the 24h ephemeral
+            // rotation) and is audit-logged only — no UI spam.
+            if let Some(KeyChange::Changed {
+                was_verified: true,
+                old_fingerprint,
+                new_fingerprint,
+            }) = &key_change
+            {
+                let message = format!(
+                    "⚠️ SECURITY: {}'s key changed ({}… → {}…) — their previous identity was VERIFIED. \
+                     This happens on key rotation, but if unexpected it may indicate impersonation. \
+                     Re-verify with /verify {}.",
+                    their_username, old_fingerprint, new_fingerprint, their_username
+                );
+                audit_logger
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .log(SecurityEvent::SecurityWarning {
+                        message: message.clone(),
+                    });
+                let _ = event_tx.send(NetworkEvent::SystemMessage { content: message });
+            } else if let Some(KeyChange::Changed {
+                was_verified: false,
+                old_fingerprint,
+                new_fingerprint,
+            }) = &key_change
+            {
+                // Routine for an unverified peer (likely 24h rotation): audit only.
+                audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                    SecurityEvent::SecurityWarning {
+                        message: format!(
+                            "{}'s key changed ({}… → {}…); peer was not verified (likely key rotation).",
+                            their_username, old_fingerprint, new_fingerprint
+                        ),
+                    },
+                );
+                tracing::info!(
+                    "Peer {} key changed (unverified; likely rotation)",
+                    their_username
+                );
+            }
 
             // Notify UI layer
             let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {
