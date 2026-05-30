@@ -2,7 +2,7 @@
 
 ## 🏗️ Overview
 
-The GhostWire server is a **"dumb relay"** - it broadcasts WebSocket messages to all connected clients without understanding or storing their content. This zero-knowledge architecture ensures all security is client-side.
+The GhostWire server is a **near-dumb relay** - it forwards WebSocket messages without ever decrypting their content; all message security is client-side. As of v0.6 it does the minimum parsing required to **route direct messages to a single recipient** (unicast) instead of broadcasting every DM to all clients. To do this it keeps an in-memory `username → connection` index, so the relay sees DM routing metadata (sender/recipient usernames) but never plaintext. Group, global, typing, and key-exchange traffic — and any DM whose recipient is offline or unknown — still fall back to broadcast.
 
 ---
 
@@ -12,39 +12,56 @@ The GhostWire server is a **"dumb relay"** - it broadcasts WebSocket messages to
 
 ```rust
 pub struct RelayState {
-    /// Map of client IDs to their broadcast channels
-    clients: Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<String>>>>,
-    /// Counter for generating unique client IDs
-    next_client_id: Arc<RwLock<ClientId>>,
+    registry: Arc<RwLock<Registry>>,
+    next_client_id: Arc<AtomicUsize>,
+    max_clients: usize,        // connection cap (DoS guard)
+    channel_capacity: usize,   // per-client outbound buffer
+}
+
+struct Registry {
+    clients: HashMap<ClientId, ClientHandle>, // id -> connection
+    names: HashMap<String, ClientId>,         // username -> id (DM routing)
+}
+
+struct ClientHandle {
+    tx: mpsc::Sender<Arc<str>>,  // bounded per-client outbound channel
+    username: Option<String>,    // learned from AUTH
 }
 ```
 
 **Key Design Decisions:**
 
-- `Arc<RwLock<HashMap>>` - Thread-safe shared state
-- `mpsc::unbounded_channel` - Per-client broadcast channel
-- `ClientId` - Simple `usize` counter for unique IDs
+- `Arc<RwLock<Registry>>` - one lock guards both the client table and the
+  `username → id` index, avoiding any lock-ordering hazard.
+- `mpsc::channel` (**bounded**, capacity 256) - a slow/stalled reader is
+  evicted via `try_send` instead of buffering without limit (DoS guard, v0.6).
+- `next_client_id: AtomicUsize` - lock-free ID allocation.
+- `names` index - lets `relay()` unicast a DM to its recipient in O(1);
+  anything not routable falls back to `broadcast()`.
 
 ### Message Flow
 
+`relay()` inspects each inbound frame and chooses unicast vs. broadcast:
+
 ```
-Client A                  Server                    Client B
-   │                         │                         │
-   ├─── WebSocket Connect ──>│                         │
-   │    (Assigned ID: 1)     │                         │
-   │                         │<─── WebSocket Connect ──┤
-   │                         │    (Assigned ID: 2)     │
-   │                         │                         │
-   ├─── Send Message ───────>│                         │
-   │    "Hello, world!"      │                         │
-   │                         ├─── Broadcast ──────────>│
-   │                         │    "Hello, world!"      │
-   │                         │    (from: 1)            │
-   │                         │                         │
-   │<─── Broadcast ──────────┤<─── Send Message ───────┤
-   │    "Hi there!"          │    "Hi there!"          │
-   │    (from: 2)            │                         │
+                         ┌──────────────────────────────┐
+ inbound text frame ───► │ parse minimal Envelope (serde)│
+                         └──────────────┬───────────────┘
+                                        │
+                 AUTH? ─── yes ──► learn username → id, then broadcast
+                                        │ no
+            recipient set AND           │
+            channel not "group:" AND ── yes ──► unicast to that client
+            recipient is connected?     │
+                                        │ no / unknown / offline
+                                        ▼
+                                   broadcast to all (except sender)
 ```
+
+- **DM** (`dm:alice:bob`, `recipient:"bob"`) → unicast to bob only.
+- **Group / global / typing / key-exchange**, or a DM to an offline/unknown
+  name → broadcast (preserves pre-v0.6 delivery).
+- **Unparseable** frame → broadcast (old dumb-relay fallback).
 
 **Important:** The server does NOT echo messages back to the sender.
 
@@ -52,19 +69,21 @@ Client A                  Server                    Client B
 
 ## Module Breakdown
 
-### [`relay.rs`](server/src/relay.rs) - Core Logic (170 lines)
+### [`relay.rs`](server/src/relay.rs) - Core Logic
 
 #### `RelayState`
 
-Manages all connected clients and their broadcast channels.
+Manages all connected clients, the username index, and message routing.
 
 **Methods:**
 
-- `new()` - Create empty state
-- `next_id()` - Generate unique client ID
-- `register_client()` - Add new client, return ID and receiver
-- `unregister_client()` - Remove disconnected client
-- `broadcast()` - Send message to all clients except sender
+- `new()` / `with_limits()` - Create state (latter sets caps for tests)
+- `try_register_client()` - Add a client if under `max_clients`; returns ID + receiver
+- `set_username()` - Index a client by its AUTH username
+- `unregister_client()` - Remove a client and release its username
+- `relay()` - Parse one frame and dispatch: unicast DM or broadcast
+- `unicast()` - Send to a single client (evicts on full/closed buffer)
+- `broadcast()` - Send to all clients except sender (evicts dead clients)
 - `client_count()` - Get current connection count
 
 #### `handle_websocket()`
@@ -88,10 +107,9 @@ tokio::spawn(async move {
     while let Some(result) = ws_rx.next().await {
         match result {
             Ok(Message::Text(text)) => {
-                state.broadcast(BroadcastMessage {
-                    from: client_id,
-                    content: text,
-                }).await;
+                // Oversized frames are dropped (see MAX_MESSAGE_BYTES).
+                // relay() parses the frame and decides unicast vs. broadcast.
+                state.relay(client_id, text.to_string()).await;
             }
             // ... handle other message types
         }
@@ -102,7 +120,7 @@ tokio::spawn(async move {
 **Cleanup:**
 Uses `tokio::select!` to wait for either task to finish, then aborts the other and unregisters the client.
 
-### [`main.rs`](server/src/main.rs) - Entry Point (160 lines)
+### [`main.rs`](server/src/main.rs) - Entry Point
 
 #### Endpoints
 
@@ -257,14 +275,17 @@ RUST_LOG=ghostwire_server=trace,tower_http=trace cargo run --bin ghostwire-local
 - Number of connected clients
 - Client IDs (internal, not exposed)
 - Message sizes (bytes)
+- **DM routing metadata**: an in-memory `username → connection` map (learned
+  from AUTH) plus the sender/recipient/channel of each routed message. Cleared
+  on disconnect; never persisted.
 
 ### What the Server Does NOT Know
 
-- Message content (treats as opaque strings)
-- User identities (no authentication)
-- Message history (no storage)
+- Message content (treats payloads as opaque strings; cannot decrypt)
+- Message history (no storage, in-memory only)
+- Any cryptographic key material
 
-**Philosophy:** The server is a "dumb pipe" - it routes traffic but cannot read it.
+**Philosophy:** The server is a near-dumb pipe — it routes traffic (and since v0.6 unicasts DMs by recipient) but can never read message content.
 
 ---
 
@@ -383,12 +404,13 @@ kill -9 <PID>
 
 ## Files Summary
 
-| File                                                               | Lines | Purpose                  |
-| ------------------------------------------------------------------ | ----- | ------------------------ |
-| [relay.rs](server/src/relay.rs) | 170   | WebSocket relay logic    |
-| [main.rs](server/src/main.rs)   | 160   | Axum/Shuttle entry point |
+| File                            | Purpose                                       |
+| ------------------------------- | --------------------------------------------- |
+| [relay.rs](server/src/relay.rs) | WebSocket relay: registry, routing, DoS caps  |
+| [main.rs](server/src/main.rs)   | Axum/Shuttle entry point                       |
+| [local.rs](server/src/local.rs) | Local (non-Shuttle) dev entry point           |
 
-**Total:** ~330 lines of clean, well-documented Rust code
+The relay is intentionally small and dependency-light; all message security is client-side.
 
 ---
 
