@@ -262,12 +262,11 @@ fn handle_key_event(
 
                 // Create DM
                 KeyCode::Char('d') => {
-                    // Prompt for username (simple implementation)
-                    if !app.users.is_empty() {
-                        // Use selected user
-                        if let Some(user) = app.users.get(app.selected_user) {
-                            app.open_dm(user.username.clone());
-                        }
+                    // Create DM with the selected user. `get` returns None for an
+                    // empty roster or out-of-range selection, so that case is
+                    // handled implicitly (silently ignored).
+                    if let Some(user) = app.users.get(app.selected_user) {
+                        app.open_dm(user.username.clone());
                     }
                 }
 
