@@ -154,16 +154,51 @@ impl RelayState {
         info!("Client {} disconnected. Total clients: {}", id, reg.clients.len());
     }
 
-    /// Associate a username (from AUTH) with a client id. Last writer wins; a
-    /// reconnecting peer reclaiming its name simply repoints the index.
+    /// Associate a username (from AUTH) with a client id.
+    ///
+    /// Usernames are unauthenticated, so this is deliberately conservative to
+    /// keep the index consistent with the live client table:
+    /// - if the client is already gone (e.g. evicted for a full buffer) nothing
+    ///   is inserted, so the index never points at a non-existent connection
+    ///   (which would silently drop DMs instead of falling back to broadcast);
+    /// - a name already held by a *different, still-connected* client is left
+    ///   untouched and the claim ignored, so no connection can hijack another
+    ///   user's DMs by re-AUTHing as them — those DMs just keep broadcasting;
+    /// - if this client previously claimed a different name, that stale index
+    ///   entry is dropped before the new one is recorded.
     async fn set_username(&self, id: ClientId, name: &str) {
         if name.is_empty() {
             return;
         }
         let mut reg = self.registry.write().await;
-        if let Some(handle) = reg.clients.get_mut(&id) {
-            handle.username = Some(name.to_string());
+
+        // Client already gone: don't create an orphan index entry.
+        if !reg.clients.contains_key(&id) {
+            debug!("Ignoring AUTH for '{}': client {} already gone", name, id);
+            return;
         }
+
+        // Refuse to steal a name another live client already holds.
+        if let Some(&owner) = reg.names.get(name)
+            && owner != id
+            && reg.clients.contains_key(&owner)
+        {
+            debug!("Client {} tried to claim in-use name '{}'; ignoring", id, name);
+            return;
+        }
+
+        // Drop any previous name this client held so no stale entry lingers.
+        let previous = reg
+            .clients
+            .get_mut(&id)
+            .and_then(|handle| handle.username.replace(name.to_string()));
+        if let Some(old) = previous
+            && old != name
+            && reg.names.get(&old) == Some(&id)
+        {
+            reg.names.remove(&old);
+        }
+
         reg.names.insert(name.to_string(), id);
         debug!("Client {} registered as '{}'", id, name);
     }
@@ -538,5 +573,44 @@ mod tests {
         state.unregister_client(alice).await;
         assert_eq!(state.lookup("alice").await, None);
         assert_eq!(state.client_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn reauth_under_new_name_drops_stale_index_entry() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
+        state.relay(alice, auth_json("alice")).await;
+        assert_eq!(state.lookup("alice").await, Some(alice));
+
+        // Same connection re-AUTHs under a different name: the old entry must go.
+        state.relay(alice, auth_json("alice2")).await;
+        assert_eq!(state.lookup("alice").await, None, "stale name must be dropped");
+        assert_eq!(state.lookup("alice2").await, Some(alice));
+    }
+
+    #[tokio::test]
+    async fn cannot_hijack_a_live_clients_name() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
+        let (mallory, _mallory_rx) = state.try_register_client().await.unwrap();
+
+        state.relay(alice, auth_json("alice")).await;
+        // Mallory tries to claim "alice" while alice is still connected.
+        state.relay(mallory, auth_json("alice")).await;
+
+        // The name still routes to the original owner, not the impostor.
+        assert_eq!(state.lookup("alice").await, Some(alice));
+    }
+
+    #[tokio::test]
+    async fn auth_for_absent_client_creates_no_orphan_entry() {
+        let state = RelayState::with_limits(10, 8);
+
+        // An id that was never registered (mimics a client evicted before its
+        // AUTH was processed) must not leave a dangling name in the index.
+        state.set_username(999, "ghost").await;
+        assert_eq!(state.lookup("ghost").await, None);
     }
 }
