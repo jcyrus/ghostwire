@@ -168,10 +168,15 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 - Encrypted payload prevents reading message content
 - Server cannot decrypt messages
 
-✅ **Compromised Server**
+✅ **Compromised Server** _(content only)_
 
-- Server only sees encrypted blobs
-- No user database or message storage
+- Message **content** is always opaque ciphertext the server cannot decrypt
+- No message storage, no persisted user database
+- ⚠️ Since v0.6 the relay keeps an **in-memory** `username → connection` map so
+  it can route DMs to a single recipient instead of broadcasting to everyone.
+  A compromised server therefore sees the **DM social graph** (who messages
+  whom, and when) in memory — but never the plaintext. See _Metadata Leakage_
+  below.
 
 ✅ **Man-in-the-Middle (MITM)** _(partial)_
 
@@ -204,7 +209,11 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ❌ **Metadata Leakage**
 
-- Server sees: Who talks to whom, when, message sizes
+- Server sees: who talks to whom, when, message sizes
+- Since v0.6, DM routing makes the sender/recipient pair **explicit** to the
+  relay (it indexes connections by username to unicast DMs). This is a
+  deliberate trade-off: O(1) instead of O(N) fan-out, at the cost of the relay
+  learning the social graph. Content stays encrypted throughout.
 - **v0.9.0**: Sealed sender, message padding, metadata minimization
 
 ❌ **Traffic Analysis**

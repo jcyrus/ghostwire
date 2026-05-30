@@ -1,8 +1,19 @@
 // GhostWire Server - WebSocket Relay
-// This module implements the "dumb relay" - it broadcasts messages without understanding them
+//
+// Historically this was a pure "dumb broadcast" relay. As of v0.6 it does the
+// minimum parsing needed to route direct messages to a single recipient
+// instead of fanning every DM out to all clients (O(N) -> O(1) bandwidth).
+//
+// Privacy note: routing means the relay now learns *recipient* and *sender*
+// usernames for DMs (the social graph), a deliberate trade-off documented in
+// docs/user/SECURITY.md. Message *content* remains opaque ciphertext — the
+// server still cannot read it. Anything it cannot confidently route (group,
+// global, typing, key-exchange broadcasts, or an offline/unknown recipient)
+// falls back to the original broadcast behavior.
 
 use axum::extract::ws::{Message, WebSocket};
 use futures::{stream::StreamExt, SinkExt};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{
     Arc,
@@ -20,7 +31,7 @@ pub const DEFAULT_MAX_CLIENTS: usize = 10_000;
 
 /// Per-client outbound buffer (messages). A bounded buffer turns a slow or
 /// malicious reader into a *dropped client* rather than unbounded memory growth:
-/// once this fills, broadcast() evicts the client instead of queueing forever.
+/// once this fills, send paths evict the client instead of queueing forever.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 
 /// Largest inbound text frame we accept (bytes). Chat ciphertext is tiny; this
@@ -28,25 +39,50 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 /// relaying them.
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 
-/// Message to be broadcast to clients
-#[derive(Debug, Clone)]
-pub struct BroadcastMessage {
-    /// The client who sent this message (to avoid echo)
-    pub from: ClientId,
-    /// The raw message content (JSON string)
-    pub content: String,
+/// Minimal view of the wire message needed for routing. All fields are optional
+/// / defaulted so a malformed or unexpected payload never fails to parse — it
+/// just falls back to broadcast. Mirrors the client's `WireMessage`
+/// (client/src/app.rs); only the routing-relevant fields are read here.
+#[derive(Debug, Deserialize)]
+struct Envelope {
+    #[serde(rename = "type", default)]
+    msg_type: String,
+    #[serde(default)]
+    channel: String,
+    #[serde(default)]
+    recipient: Option<String>,
+    #[serde(default)]
+    meta: EnvelopeMeta,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EnvelopeMeta {
+    #[serde(default)]
+    sender: String,
+}
+
+/// Per-connection state held in the registry.
+struct ClientHandle {
+    tx: mpsc::Sender<Arc<str>>,
+    /// Username learned from this client's AUTH message, if any.
+    username: Option<String>,
+}
+
+/// All shared, lock-protected relay state. Keeping the client table and the
+/// username index behind a single lock avoids any lock-ordering hazard.
+#[derive(Default)]
+struct Registry {
+    /// client id -> connection handle
+    clients: HashMap<ClientId, ClientHandle>,
+    /// username -> client id (for O(1) DM routing)
+    names: HashMap<String, ClientId>,
 }
 
 /// Shared state for the relay server
 #[derive(Clone)]
 pub struct RelayState {
-    /// Map of client IDs to their broadcast channels.
-    /// Uses `Arc<str>` so broadcast() creates a single refcounted copy instead
-    /// of cloning the String once per recipient.
-    clients: Arc<RwLock<HashMap<ClientId, mpsc::Sender<Arc<str>>>>>,
+    registry: Arc<RwLock<Registry>>,
     /// Monotonic counter for unique client IDs.
-    /// AtomicUsize replaces Arc<RwLock<usize>> — a single fetch_add instruction
-    /// vs. a full async lock acquisition.
     next_client_id: Arc<AtomicUsize>,
     /// Upper bound on concurrent clients (see [`DEFAULT_MAX_CLIENTS`]).
     max_clients: usize,
@@ -63,7 +99,7 @@ impl RelayState {
     /// Create a relay state with explicit limits (used by tests).
     pub fn with_limits(max_clients: usize, channel_capacity: usize) -> Self {
         Self {
-            clients: Arc::new(RwLock::new(HashMap::new())),
+            registry: Arc::new(RwLock::new(Registry::default())),
             next_client_id: Arc::new(AtomicUsize::new(0)),
             max_clients,
             channel_capacity,
@@ -82,8 +118,8 @@ impl RelayState {
     async fn try_register_client(&self) -> Option<(ClientId, mpsc::Receiver<Arc<str>>)> {
         let (tx, rx) = mpsc::channel(self.channel_capacity);
 
-        let mut clients = self.clients.write().await;
-        if clients.len() >= self.max_clients {
+        let mut reg = self.registry.write().await;
+        if reg.clients.len() >= self.max_clients {
             warn!(
                 "Connection rejected: at capacity ({} clients)",
                 self.max_clients
@@ -92,18 +128,95 @@ impl RelayState {
         }
 
         let id = self.next_id();
-        clients.insert(id, tx);
-        info!("Client {} connected. Total clients: {}", id, clients.len());
+        reg.clients.insert(
+            id,
+            ClientHandle {
+                tx,
+                username: None,
+            },
+        );
+        info!("Client {} connected. Total clients: {}", id, reg.clients.len());
 
         Some((id, rx))
     }
 
-    /// Unregister a client.
-    /// Holds the write lock only once, reading `.len()` from the held guard.
+    /// Unregister a client and drop any username it owned.
     async fn unregister_client(&self, id: ClientId) {
-        let mut clients = self.clients.write().await;
-        clients.remove(&id);
-        info!("Client {} disconnected. Total clients: {}", id, clients.len());
+        let mut reg = self.registry.write().await;
+        if let Some(handle) = reg.clients.remove(&id)
+            && let Some(name) = handle.username
+            // Only clear the name index if it still points at this client
+            // (a reconnect under the same name may have re-claimed it).
+            && reg.names.get(&name) == Some(&id)
+        {
+            reg.names.remove(&name);
+        }
+        info!("Client {} disconnected. Total clients: {}", id, reg.clients.len());
+    }
+
+    /// Associate a username (from AUTH) with a client id. Last writer wins; a
+    /// reconnecting peer reclaiming its name simply repoints the index.
+    async fn set_username(&self, id: ClientId, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        let mut reg = self.registry.write().await;
+        if let Some(handle) = reg.clients.get_mut(&id) {
+            handle.username = Some(name.to_string());
+        }
+        reg.names.insert(name.to_string(), id);
+        debug!("Client {} registered as '{}'", id, name);
+    }
+
+    /// Parse and relay one inbound message: learn usernames from AUTH, unicast
+    /// routable DMs, and broadcast everything else.
+    async fn relay(&self, from: ClientId, content: String) {
+        match serde_json::from_str::<Envelope>(&content) {
+            Ok(env) => {
+                // Learn the sender's username from its AUTH announcement.
+                if env.msg_type == "AUTH" {
+                    self.set_username(from, &env.meta.sender).await;
+                }
+
+                // Unicast only a true, routable DM: a named recipient that is
+                // currently connected, on a non-group channel. Everything else
+                // (group, global, typing, key-exchange broadcast, offline or
+                // unknown recipient) falls through to broadcast.
+                if let Some(recipient) = env.recipient.as_deref()
+                    && !env.channel.starts_with("group:")
+                    && let Some(target) = self.lookup(recipient).await
+                {
+                    self.unicast(target, content).await;
+                    return;
+                }
+
+                self.broadcast(from, content).await;
+            }
+            // Unparseable payloads keep the old dumb-relay behavior.
+            Err(_) => self.broadcast(from, content).await,
+        }
+    }
+
+    /// Resolve a username to a connected client id.
+    async fn lookup(&self, username: &str) -> Option<ClientId> {
+        self.registry.read().await.names.get(username).copied()
+    }
+
+    /// Send a message to a single client. Evicts the client if its buffer is
+    /// full (stalled reader) or closed (gone).
+    async fn unicast(&self, target: ClientId, content: String) {
+        let shared: Arc<str> = Arc::from(content.as_str());
+        let failed = {
+            let reg = self.registry.read().await;
+            match reg.clients.get(&target) {
+                Some(handle) => handle.tx.try_send(shared).is_err(),
+                None => false,
+            }
+        };
+        if failed {
+            warn!("Dropping client {} (unicast send failed)", target);
+            self.remove_clients(&[target]).await;
+        }
     }
 
     /// Broadcast a message to all clients except the sender.
@@ -113,44 +226,48 @@ impl RelayState {
     /// Uses non-blocking `try_send`: a client whose buffer is full (a slow or
     /// stalled reader) is evicted rather than allowed to apply backpressure to
     /// the whole relay or grow memory without bound.
-    async fn broadcast(&self, msg: BroadcastMessage) {
-        let shared: Arc<str> = Arc::from(msg.content.as_str());
-        let clients = self.clients.read().await;
+    async fn broadcast(&self, from: ClientId, content: String) {
+        let shared: Arc<str> = Arc::from(content.as_str());
         let mut failed_clients = Vec::new();
 
-        for (&client_id, tx) in clients.iter() {
-            // Don't echo back to sender
-            if client_id == msg.from {
-                continue;
-            }
-
-            // Arc::clone is just an atomic refcount increment.
-            // try_send never awaits: Full (slow client) and Closed (gone) both
-            // mean "drop this client".
-            if let Err(e) = tx.try_send(Arc::clone(&shared)) {
-                let reason = match e {
-                    mpsc::error::TrySendError::Full(_) => "full",
-                    mpsc::error::TrySendError::Closed(_) => "closed",
-                };
-                warn!("Dropping client {} (channel {})", client_id, reason);
-                failed_clients.push(client_id);
+        {
+            let reg = self.registry.read().await;
+            for (&client_id, handle) in reg.clients.iter() {
+                // Don't echo back to sender
+                if client_id == from {
+                    continue;
+                }
+                // try_send never awaits: Full (slow client) and Closed (gone)
+                // both mean "drop this client".
+                if handle.tx.try_send(Arc::clone(&shared)).is_err() {
+                    failed_clients.push(client_id);
+                }
             }
         }
 
-        // Clean up failed clients
-        drop(clients);
         if !failed_clients.is_empty() {
-            let mut clients = self.clients.write().await;
-            for client_id in failed_clients {
-                clients.remove(&client_id);
-                debug!("Removed dead client {}", client_id);
+            self.remove_clients(&failed_clients).await;
+        }
+    }
+
+    /// Remove dead clients and any username index entries they owned.
+    async fn remove_clients(&self, ids: &[ClientId]) {
+        let mut reg = self.registry.write().await;
+        for &id in ids {
+            if let Some(handle) = reg.clients.remove(&id) {
+                if let Some(name) = handle.username
+                    && reg.names.get(&name) == Some(&id)
+                {
+                    reg.names.remove(&name);
+                }
+                debug!("Removed dead client {}", id);
             }
         }
     }
 
     /// Get the current number of connected clients
     pub async fn client_count(&self) -> usize {
-        self.clients.read().await.len()
+        self.registry.read().await.clients.len()
     }
 }
 
@@ -190,7 +307,7 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
                     }
                 }
 
-                // Forward broadcast messages.
+                // Forward routed/broadcast messages.
                 // msg is Arc<str>; allocate the String here (unavoidable for WS send),
                 // but the channel itself held only a refcount, not a full copy.
                 Some(msg) = broadcast_rx.recv() => {
@@ -224,15 +341,9 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
 
                     debug!("Client {} sent: {} bytes", client_id, text.len());
 
-                    // Broadcast to all other clients.
-                    // text is Utf8Bytes (axum 0.8); .to_string() is the required conversion.
-                    // The broadcast() itself avoids N-1 further clones via Arc<str>.
-                    state_clone
-                        .broadcast(BroadcastMessage {
-                            from: client_id,
-                            content: text.to_string(),
-                        })
-                        .await;
+                    // Parse-and-route. text is Utf8Bytes (axum 0.8); .to_string()
+                    // is the required conversion. relay() decides unicast vs broadcast.
+                    state_clone.relay(client_id, text.to_string()).await;
                 }
                 Ok(Message::Close(_)) => {
                     info!("Client {} sent close frame", client_id);
@@ -276,11 +387,24 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
 mod tests {
     use super::*;
 
+    /// Build an AUTH wire message for `user` (matches the client's format).
+    fn auth_json(user: &str) -> String {
+        format!(
+            r#"{{"type":"AUTH","payload":"{user}","channel":"global","meta":{{"sender":"{user}","timestamp":0}},"action":false}}"#
+        )
+    }
+
+    /// Build a DM message from `sender` to `recipient` on a dm: channel.
+    fn dm_json(sender: &str, recipient: &str) -> String {
+        format!(
+            r#"{{"type":"MSG","payload":"ciphertext","channel":"dm:{sender}:{recipient}","meta":{{"sender":"{sender}","timestamp":0}},"encrypted":true,"recipient":"{recipient}","action":false}}"#
+        )
+    }
+
     #[tokio::test]
     async fn rejects_connections_beyond_capacity() {
         let state = RelayState::with_limits(2, 8);
 
-        // Hold the receivers so the senders stay alive in the map.
         let first = state.try_register_client().await;
         let second = state.try_register_client().await;
         assert!(first.is_some());
@@ -291,7 +415,6 @@ mod tests {
         assert!(state.try_register_client().await.is_none());
         assert_eq!(state.client_count().await, 2);
 
-        // Keep guards alive until here.
         drop((first, second));
     }
 
@@ -301,58 +424,119 @@ mod tests {
 
         // Slow client: registered but never drains its receiver.
         let (_slow_id, _slow_rx) = state.try_register_client().await.unwrap();
-        // A sender we can broadcast "from" so the slow client is a recipient.
         let (sender_id, _sender_rx) = state.try_register_client().await.unwrap();
         assert_eq!(state.client_count().await, 2);
 
-        // Send more messages than the slow client's buffer (capacity 2) can hold.
+        // Broadcast more than the slow client's buffer (capacity 2) can hold.
         for i in 0..5 {
-            state
-                .broadcast(BroadcastMessage {
-                    from: sender_id,
-                    content: format!("msg {i}"),
-                })
-                .await;
+            state.broadcast(sender_id, format!("msg {i}")).await;
         }
 
-        // The slow client should have been evicted once its buffer filled.
         assert_eq!(state.client_count().await, 1);
     }
 
     #[tokio::test]
-    async fn delivers_to_other_clients() {
+    async fn broadcast_delivers_to_other_clients() {
         let state = RelayState::with_limits(10, 8);
 
         let (sender_id, _sender_rx) = state.try_register_client().await.unwrap();
         let (_recipient_id, mut recipient_rx) = state.try_register_client().await.unwrap();
 
-        state
-            .broadcast(BroadcastMessage {
-                from: sender_id,
-                content: "hello".to_string(),
-            })
-            .await;
+        state.broadcast(sender_id, "hello".to_string()).await;
 
         let received = recipient_rx.recv().await.expect("recipient should receive");
         assert_eq!(&*received, "hello");
-        // Both clients remain connected.
         assert_eq!(state.client_count().await, 2);
     }
 
     #[tokio::test]
-    async fn does_not_echo_to_sender() {
+    async fn broadcast_does_not_echo_to_sender() {
         let state = RelayState::with_limits(10, 8);
 
         let (sender_id, mut sender_rx) = state.try_register_client().await.unwrap();
+        state.broadcast(sender_id, "no echo".to_string()).await;
 
-        state
-            .broadcast(BroadcastMessage {
-                from: sender_id,
-                content: "no echo".to_string(),
-            })
-            .await;
-
-        // Sender must not receive its own message.
         assert!(sender_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn dm_is_unicast_only_to_recipient() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+        let (_carol, mut carol_rx) = state.try_register_client().await.unwrap();
+
+        // Everyone authenticates so the relay learns the name -> id map.
+        state.relay(alice, auth_json("alice")).await;
+        state.relay(_bob, auth_json("bob")).await;
+        state.relay(_carol, auth_json("carol")).await;
+
+        // Drain the AUTH broadcasts each client received.
+        while bob_rx.try_recv().is_ok() {}
+        while carol_rx.try_recv().is_ok() {}
+        while alice_rx.try_recv().is_ok() {}
+
+        // Alice DMs bob.
+        state.relay(alice, dm_json("alice", "bob")).await;
+
+        // Bob receives exactly the DM; carol receives nothing.
+        let got = bob_rx.try_recv().expect("bob should get the DM");
+        assert!(got.contains("\"recipient\":\"bob\""));
+        assert!(carol_rx.try_recv().is_err(), "carol must not receive the DM");
+        assert!(alice_rx.try_recv().is_err(), "sender must not get an echo");
+    }
+
+    #[tokio::test]
+    async fn dm_to_unknown_recipient_falls_back_to_broadcast() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+
+        // Alice authenticates; bob does NOT, so "bob" is unknown to the relay.
+        state.relay(alice, auth_json("alice")).await;
+        while bob_rx.try_recv().is_ok() {}
+
+        // DM to the (unregistered) name falls back to broadcast, so bob still
+        // receives it — preserving pre-routing delivery behavior.
+        state.relay(alice, dm_json("alice", "bob")).await;
+        assert!(bob_rx.try_recv().is_ok(), "fallback broadcast should reach bob");
+    }
+
+    #[tokio::test]
+    async fn group_message_is_broadcast_not_unicast() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+        let (_carol, mut carol_rx) = state.try_register_client().await.unwrap();
+
+        state.relay(alice, auth_json("alice")).await;
+        state.relay(_bob, auth_json("bob")).await;
+        state.relay(_carol, auth_json("carol")).await;
+        while bob_rx.try_recv().is_ok() {}
+        while carol_rx.try_recv().is_ok() {}
+
+        // Group message: recipient is set to the group id, channel is group:*.
+        let group = r#"{"type":"MSG","payload":"ct","channel":"group:team","meta":{"sender":"alice","timestamp":0},"encrypted":true,"recipient":"group:team","action":false}"#;
+        state.relay(alice, group.to_string()).await;
+
+        // Both other members receive it (broadcast), not just one.
+        assert!(bob_rx.try_recv().is_ok());
+        assert!(carol_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn username_is_cleared_on_disconnect() {
+        let state = RelayState::with_limits(10, 8);
+
+        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
+        state.relay(alice, auth_json("alice")).await;
+        assert_eq!(state.lookup("alice").await, Some(alice));
+
+        state.unregister_client(alice).await;
+        assert_eq!(state.lookup("alice").await, None);
+        assert_eq!(state.client_count().await, 0);
     }
 }
