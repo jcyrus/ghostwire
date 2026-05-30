@@ -667,13 +667,18 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
         NetworkEvent::SystemMessage { content } => {
             app.add_message(ChatMessage::system(content));
         }
-        NetworkEvent::SecurityAlert { content } => {
+        NetworkEvent::SecurityAlert { username, content } => {
             // Loud security warning (e.g. verified-peer key change): render as a
             // Warning, not the quiet cyan Info that `ChatMessage::system` uses.
             app.add_message(ChatMessage::system_with_severity(
                 content,
                 app::MessageSeverity::Warning,
             ));
+            // The peer's key changed, so any prior verification no longer applies:
+            // drop the roster ✓ badge to match the warning's "re-verify" message.
+            if let Some(user) = app.users.iter_mut().find(|u| u.username == username) {
+                user.verified = false;
+            }
         }
         NetworkEvent::Error { message } => {
             // Parse error and create user-friendly message

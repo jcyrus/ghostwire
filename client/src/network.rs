@@ -52,8 +52,9 @@ pub enum NetworkEvent {
     SystemMessage { content: String },
 
     /// Security alert — like a system message but surfaced as a loud Warning in
-    /// the UI (used for verified-peer key changes).
-    SecurityAlert { content: String },
+    /// the UI (used for verified-peer key changes). Carries the affected peer so
+    /// the UI can also drop that peer's now-stale verified badge.
+    SecurityAlert { username: String, content: String },
 
     /// Error occurred
     Error { message: String },
@@ -1152,8 +1153,11 @@ fn handle_wire_message(
                             message: message.clone(),
                         });
                     // Route through SecurityAlert so the UI renders it as a loud
-                    // Warning, not a quiet cyan info line.
-                    let _ = event_tx.send(NetworkEvent::SecurityAlert { content: message });
+                    // Warning AND drops the now-stale verified badge for this peer.
+                    let _ = event_tx.send(NetworkEvent::SecurityAlert {
+                        username: their_username.clone(),
+                        content: message,
+                    });
                 }
                 KeyChange::Changed {
                     was_verified: false,
