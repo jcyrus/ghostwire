@@ -177,6 +177,8 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 - Key exchange is authenticated
 - Manual safety number verification is available via `/verify` and `/confirm`
+- Key-change detection (TOFU): a changed key for a previously **verified** peer
+  triggers a loud in-app warning and invalidates the prior verification
 
 ✅ **Replay Attacks**
 
@@ -303,6 +305,11 @@ safety_number = SHA256(your_public_key || their_public_key)
 - **Symmetric chain ratchet** — each DM session advances a send/receive
   chain (`ratchet_chain_key`), so every message uses a fresh message key
   derived from the chain key
+- **Key-change detection (TOFU)** — the first public key seen for a peer is
+  remembered. If it later changes, the change is audit-logged; if the peer had
+  been **verified**, you get a loud in-app warning and must re-verify. (Because
+  GhostWire exchanges the *rotating* X25519 ephemeral key, a change to an
+  unverified peer is treated as routine rotation and logged quietly.)
 
 **Not Yet Implemented**:
 
@@ -310,7 +317,6 @@ safety_number = SHA256(your_public_key || their_public_key)
   Diffie-Hellman step, so GhostWire does **not** yet provide
   post-compromise security (a leaked chain key compromises subsequent
   messages until the next 24-hour ephemeral rotation)
-- Key-change detection (warning the user when a peer's identity key changes)
 
 ### Roadmap: full DH Double Ratchet
 
@@ -365,7 +371,8 @@ DH ratchet step ──► new root key ──► new sending chain
 
 1. **Verify Safety Numbers** (when available)
    - Compare with your contact out-of-band
-   - Watch for warnings if keys change
+   - If a **verified** peer's key changes, GhostWire warns you in-app and resets
+     verification — re-run `/verify` and compare again before trusting it
 
 2. **Use Self-Destruct for Sensitive Messages**
 

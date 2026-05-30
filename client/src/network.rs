@@ -2,8 +2,8 @@
 // This module handles WebSocket communication in a separate async task
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
-use crate::crypto::{decrypt_message, encrypt_message};
-use crate::keystore::KeyStore;
+use crate::crypto::{decode_public_key, decrypt_message, encrypt_message};
+use crate::keystore::{KeyChange, KeyStore};
 use crate::security_audit::{SecurityAuditLogger, SecurityEvent};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{SinkExt, StreamExt};
@@ -50,6 +50,11 @@ pub enum NetworkEvent {
 
     /// System message
     SystemMessage { content: String },
+
+    /// Security alert — like a system message but surfaced as a loud Warning in
+    /// the UI (used for verified-peer key changes). Carries the affected peer so
+    /// the UI can also drop that peer's now-stale verified badge.
+    SecurityAlert { username: String, content: String },
 
     /// Error occurred
     Error { message: String },
@@ -1083,15 +1088,33 @@ fn handle_wire_message(
             let their_username = msg.meta.sender.clone();
             let their_public_key = msg.payload.clone();
 
+            // Decode the peer key once; both the TOFU check and the pending-key
+            // store reuse it (avoids decoding the same base64 twice).
+            let their_pk = match decode_public_key(&their_public_key) {
+                Ok(pk) => pk,
+                Err(e) => {
+                    tracing::error!("Failed to decode public key from {}: {}", their_username, e);
+                    return;
+                }
+            };
+
             let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
 
-            // Store their public key
-            if let Err(e) = store.store_peer_public_key(&their_username, &their_public_key) {
-                tracing::error!("Failed to store public key from {}: {}", their_username, e);
-                return;
-            }
+            // Detect a key change (TOFU) BEFORE the session is replaced, so the
+            // verification state we read reflects the prior session.
+            let key_change = store.track_peer_key(&their_username, &their_pk);
 
-            // Establish encrypted session
+            // Record their public key for the handshake.
+            store.store_peer_public_key_decoded(&their_username, their_pk);
+
+            // Establish encrypted session.
+            //
+            // Note: even when a *verified* peer's key changed, we re-establish
+            // immediately so messaging keeps working, rather than blocking until
+            // the user re-verifies (as Signal does). The new session starts
+            // `verified == false`, which clears the verified badge, and the user
+            // is warned below to re-run `/verify`. This is a deliberate
+            // usability trade-off, not full Signal-style blocking.
             if let Err(e) = store.establish_session(&their_username) {
                 tracing::error!("Failed to establish session with {}: {}", their_username, e);
                 return;
@@ -1106,6 +1129,57 @@ fn handle_wire_message(
                     public_key_fingerprint: their_public_key[..16].to_string(),
                 },
             );
+
+            // Surface key changes. A change to a *verified* peer is a serious
+            // warning (verification no longer applies to the new key); a change
+            // to an unverified peer is routine (likely the 24h ephemeral
+            // rotation) and is audit-logged only — no UI spam.
+            match &key_change {
+                KeyChange::Changed {
+                    was_verified: true,
+                    old_fingerprint,
+                    new_fingerprint,
+                } => {
+                    let message = format!(
+                        "⚠️ SECURITY: {}'s key changed ({}… → {}…) — their previous identity was VERIFIED. \
+                         This happens on key rotation, but if unexpected it may indicate impersonation. \
+                         Re-verify with /verify {}.",
+                        their_username, old_fingerprint, new_fingerprint, their_username
+                    );
+                    audit_logger
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .log(SecurityEvent::SecurityWarning {
+                            message: message.clone(),
+                        });
+                    // Route through SecurityAlert so the UI renders it as a loud
+                    // Warning AND drops the now-stale verified badge for this peer.
+                    let _ = event_tx.send(NetworkEvent::SecurityAlert {
+                        username: their_username.clone(),
+                        content: message,
+                    });
+                }
+                KeyChange::Changed {
+                    was_verified: false,
+                    old_fingerprint,
+                    new_fingerprint,
+                } => {
+                    // Routine for an unverified peer (likely 24h rotation): audit only.
+                    audit_logger.lock().unwrap_or_else(|e| e.into_inner()).log(
+                        SecurityEvent::SecurityWarning {
+                            message: format!(
+                                "{}'s key changed ({}… → {}…); peer was not verified (likely key rotation).",
+                                their_username, old_fingerprint, new_fingerprint
+                            ),
+                        },
+                    );
+                    tracing::info!(
+                        "Peer {} key changed (unverified; likely rotation)",
+                        their_username
+                    );
+                }
+                KeyChange::FirstSeen | KeyChange::Unchanged => {}
+            }
 
             // Notify UI layer
             let _ = event_tx.send(NetworkEvent::KeyExchangeReceived {
