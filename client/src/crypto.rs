@@ -187,6 +187,17 @@ pub fn compute_safety_number(our_identity: &VerifyingKey, their_identity: &Verif
     hex::encode(&hash[..8])
 }
 
+/// Short fingerprint of a single X25519 public key (first 8 bytes of SHA-256,
+/// hex-encoded) for display in key-change warnings. Shares the same
+/// "first 8 bytes of SHA-256, hex" convention as [`compute_safety_number`],
+/// kept here as the one home for key fingerprinting.
+pub fn fingerprint_public_key(key: &PublicKey) -> String {
+    use sha2::Digest;
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    hex::encode(&hasher.finalize()[..8])
+}
+
 /// Encode public key to base64 for wire transmission
 pub fn encode_public_key(public_key: &PublicKey) -> String {
     BASE64.encode(public_key.as_bytes())
