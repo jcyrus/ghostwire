@@ -1,7 +1,7 @@
 # GhostWire Security Model
 
-**Version**: v0.5.2
-**Last Updated**: May 29, 2026
+**Version**: v0.6.0
+**Last Updated**: May 31, 2026
 **Status**: Released security model
 
 ---
@@ -421,27 +421,27 @@ DH ratchet step ──► new root key ──► new sending chain
 
 ## Known Limitations
 
-### Historical v0.3.0 Limitations
+1. **No Post-Compromise Security**
+   - The symmetric chain ratchet gives unique per-message keys but does not self-heal after a key compromise; a leaked chain key exposes subsequent messages until the next 24-hour rotation
+   - A full DH Double Ratchet (Signal-style) is planned for v0.7.0
 
-1. **No Identity Verification UI**
-   - This was true in v0.3.0 only
-   - `main` now supports `/verify` and `/confirm`
-
-2. **No Group Encryption**
-   - Only 1-on-1 DMs are encrypted
-   - Global channel is plaintext
-
-3. **Metadata Exposed**
-   - Server sees: who, when, message count
+2. **Metadata Leakage**
+   - Server sees connection timing, message frequency, and (since v0.6) the DM social graph (sender/recipient usernames)
    - No traffic padding or cover traffic
+   - Sealed sender and message padding are planned for v0.9.0
 
-4. **Replay Protection Absent in v0.3.0**
-   - This was true in v0.3.0 only
-   - `main` now uses per-session nonce tracking
+3. **TOFU Only**
+   - First key exchange is unauthenticated; vulnerable to active MITM at first contact
+   - Manual safety-number verification (`/verify`, `/confirm`) is available but not required
+   - Key-change detection (v0.6.0) warns loudly when a previously verified peer's key changes
 
-5. **Trust On First Use (TOFU)**
-   - First key exchange is unauthenticated
-   - Vulnerable to active MITM
+4. **No Offline Delivery**
+   - The relay has no store-and-forward; messages sent while a recipient is offline are dropped
+   - Opt-in encrypted offline queuing is planned for v0.9.0
+
+5. **Global Channel is Plaintext**
+   - Only DMs and `group:*` channels are end-to-end encrypted
+   - Global broadcast remains plaintext by design
 
 ---
 
@@ -488,23 +488,37 @@ We follow **responsible disclosure**:
 
 ## Future Roadmap
 
-### v0.4.0 - Complete the Security Story
+### ✅ v0.4.0 - Complete the Security Story
 
-- [x] Safety number verification UI
+- [x] Safety number verification UI (`/verify`, `/confirm`)
 - [x] Self-destruct UI command (`/expire <seconds>`)
 - [x] Key rotation trigger activation
 - [x] Per-message keys (symmetric chain ratchet — _not_ full DH Double Ratchet)
 - [x] Replay protection (nonce tracking)
 - [x] Group message encryption (sender keys)
 
+### ✅ v0.6.0 - Relay Hardening & TOFU
+
+- [x] Relay DoS guards (bounded channels, eviction, connection cap, frame limit)
+- [x] DM unicast routing (O(1) delivery, broadcast fallback)
+- [x] Username index hardening (orphan/stale/hijack prevention)
+- [x] TOFU peer key-change detection (loud warning for verified peers)
+
+### v0.7.0 - Post-Compromise Security
+
+- [ ] DH Double Ratchet for DMs (post-compromise security, session self-healing)
+- [ ] Group sender-key ratchet per message
+- [ ] Per-IP rate limiting
+
 ### v0.9.0 - Advanced Privacy
 
 - [ ] Sealed sender (hide sender identity from relay)
-- [ ] Metadata minimization
 - [ ] Message padding (uniform ciphertext sizes)
+- [ ] Metadata minimization
 - [ ] Tor integration option
 - [ ] Session resumption without key re-exchange
 - [ ] Multi-device identity
+- [ ] Opt-in offline message queuing (TTL-bounded encrypted store-and-forward)
 
 ### v1.0.0 - Production Hardening
 

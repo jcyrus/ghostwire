@@ -2,7 +2,37 @@
 
 ## Overview
 
-GhostWire now includes the released v0.4.0 security-story work, in addition to the earlier v0.2.0 and v0.3.0 foundations.
+Current release: **v0.6.0**. The sections below summarise what shipped in each version; detailed implementation notes follow for the earlier releases.
+
+### ✅ v0.6.0 Features
+
+1. **Relay DoS Hardening** — bounded per-client outbound channel (256 messages), `try_send` eviction of slow/stalled readers, 10,000-client connection cap, 64 KiB inbound frame limit
+2. **DM Unicast Routing** — relay parses a minimal `Envelope`, unicasts DMs to the named recipient (O(N) → O(1) bandwidth), falls back to broadcast for everything else
+3. **Username Index Hardening** — `set_username` prevents orphan entries on evicted clients, stale entries on re-AUTH renames, and name hijacking by live impostors
+4. **TOFU Peer Key-Change Detection** — client tracks first-seen public key per peer; verified-peer key change triggers a loud in-app `SecurityAlert` and clears the verified badge; unverified changes are audit-logged quietly
+
+### ✅ v0.5.2 Features
+
+1. **Mutex Poisoning Recovery** — heartbeat and audit logger paths recover gracefully instead of panicking
+2. **DM Channel Canonicalization** — `dm:bob:alice` is normalized to `dm:alice:bob` at insertion, preventing duplicate DM channels and key/session mismatches
+3. **`Arc<str>` Broadcast** — single allocation per outbound frame regardless of connected client count
+4. **Lock Correctness** — `Arc<RwLock<_>>` replaces bare mutexes where concurrent reads were safe
+
+### ✅ v0.5.1 Features
+
+1. **Session Bootstrap Recovery** — re-sends targeted key exchange to late-joining peers, preventing one-way encrypted DM failures
+2. **DM Recipient Parsing** — correctly resolves the peer from `dm:user1:user2` channel IDs
+3. **Hosted Status Page** — derives the public WebSocket endpoint from forwarded request headers
+
+### ✅ v0.5.0 Features
+
+1. **Markdown Rendering** — bold, italic, inline code, block quotes, and fenced code blocks with syntax highlighting
+2. **Action Messages** — `/me <action>` displayed in italic magenta
+3. **Emoji Reactions** — `/react <emoji>` with aggregated per-message counts; quick-react `r` shortcut
+4. **Procedural Username Colors** — deterministic colors derived from each peer's X25519 public key
+5. **Command Palette** — dedicated `InputMode::Command` with inline hints and cyan border
+6. **Focus Mode** — `F10` toggles the telemetry sidebar
+7. **Unicode-safe Input** — cursor movement, insertion, and backspace are char-boundary-aware; emoji no longer panic
 
 ### ✅ v0.4.0 Features
 
@@ -246,7 +276,7 @@ NetworkCommand::Authenticate { username: new_username } => {
 
 Usernames will be rendered in unique, deterministic colors derived from each peer's cryptographic identity. The first 3 bytes of the user's X25519 public key are mapped directly to RGB values and clamped to a minimum luminance threshold so they remain readable on dark terminal backgrounds. Ratatui's `Style::fg(Color::Rgb(r, g, b))` API makes this a zero-dependency addition.
 
-### DCC File Transfers (v0.6.0)
+### DCC File Transfers (v0.8.0)
 
 Direct Client-to-Client file transfers will reuse the existing ChaCha20-Poly1305 AEAD implementation. Files will be chunked into fixed-size frames before encryption so each chunk fits within a single WebSocket message and can be independently authenticated. The relay is bypassed entirely — peers negotiate a direct WebSocket connection using a coordination handshake through the relay, then stream encrypted chunks peer-to-peer.
 

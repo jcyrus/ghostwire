@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-31
+
+### Added
+
+- **DM unicast routing** — relay parses a minimal `Envelope` per frame and routes direct messages to the named recipient only instead of broadcasting to all clients (O(N) → O(1) bandwidth). Unknown, offline, group, typing, key-exchange, and unparseable frames fall back to broadcast, preserving pre-v0.6 delivery semantics.
+- **TOFU peer key-change detection** — `KeyStore` records the first-seen public key per peer. A verified peer's key change triggers a loud in-app `SecurityAlert` warning and clears the verified badge, prompting re-verification. Unverified key changes are audit-logged quietly as routine rotation.
+
+### Changed
+
+- **Relay DoS hardening** — per-client outbound channel is now bounded (256 messages); `try_send` evicts slow or stalled readers instead of buffering without limit. Added a 10,000-client connection cap and a 64 KiB inbound frame limit.
+- **Username index hardening** — `set_username` now guards against three edge cases: orphan index entries when a client is evicted before its AUTH is processed; stale entries when a client re-AUTHs under a new name; and name hijacking when a live impostor claims another connected user's username. DMs to a refused or unknown name fall back to broadcast.
+- Server architecture doc (`docs/dev/SERVER.md`) rewritten to reflect the `Registry` struct, bounded channels, and DM routing logic.
+- Security doc (`docs/user/SECURITY.md`) updated: "Compromised Server" section scoped to content-only; Metadata Leakage section documents the DM social-graph trade-off introduced by unicast routing.
+
 ## [0.5.2] - 2026-05-03
 
 ### Fixed
@@ -320,9 +334,13 @@ See `docs/SECURITY.md` for complete details.
 - No group channels yet (reserved for future)
 - Server broadcasts all messages to all clients (no server-side filtering)
 
-[Unreleased]: https://github.com/jcyrus/GhostWire/compare/v0.4.1...HEAD
-[0.4.1]: https://github.com/jcyrus/GhostWire/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/jcyrus/GhostWire/compare/v0.3.2...v0.4.0
-[0.1.2]: https://github.com/jcyrus/GhostWire/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/jcyrus/GhostWire/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/jcyrus/GhostWire/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jcyrus/ghostwire/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jcyrus/ghostwire/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/jcyrus/ghostwire/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/jcyrus/ghostwire/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/jcyrus/ghostwire/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/jcyrus/ghostwire/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/jcyrus/ghostwire/compare/v0.3.2...v0.4.0
+[0.1.2]: https://github.com/jcyrus/ghostwire/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/jcyrus/ghostwire/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/jcyrus/ghostwire/releases/tag/v0.1.0
