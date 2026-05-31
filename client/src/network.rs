@@ -96,6 +96,9 @@ pub enum NetworkEvent {
 
     /// Sender key received for group encryption (v0.4.0)
     SenderKeyReceived { group_id: String, sender: String },
+
+    /// Relay confirmed a DM reached the recipient's outbound channel (v0.7.0).
+    MessageDelivered { message_id: String, recipient: String },
 }
 
 /// Messages sent from the UI to the network task
@@ -1187,6 +1190,17 @@ fn handle_wire_message(
                 public_key_b64: their_public_key,
             });
         }
+        MessageType::Ack => {
+            if let Some(mid) = msg.message_id {
+                let recipient = msg.recipient.unwrap_or_default();
+                let _ = event_tx.send(NetworkEvent::MessageDelivered {
+                    message_id: mid,
+                    recipient,
+                });
+            }
+        }
+        // Unrecognised type from a future protocol version — silently discard.
+        MessageType::Unknown => {}
         MessageType::SenderKey => {
             if msg.recipient.as_deref() != Some(local_username) {
                 return;

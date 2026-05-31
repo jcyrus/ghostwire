@@ -30,6 +30,23 @@ pub enum MessageType {
     /// Sender key distribution for group E2EE (v0.4.0)
     #[serde(rename = "SENDER_KEY")]
     SenderKey,
+    /// Relay-generated delivery receipt (v0.7.0). Sent to the original sender
+    /// after a DM is successfully unicasted to the recipient's channel.
+    #[serde(rename = "ACK")]
+    Ack,
+    /// Catch-all for unrecognised message types from future protocol versions.
+    /// Prevents parse errors when clients of different versions communicate.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Delivery status for outbound messages (v0.7.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryStatus {
+    /// Frame handed to the WebSocket layer; relay delivery unconfirmed.
+    Sent,
+    /// Relay confirmed the frame reached the recipient's outbound channel.
+    Delivered,
 }
 
 /// Metadata for each message
@@ -111,6 +128,8 @@ pub struct ChatMessage {
     pub is_action: bool,
     /// Reactions grouped by emoji -> set of usernames
     pub reactions: HashMap<String, HashSet<String>>,
+    /// Relay delivery confirmation status (v0.7.0)
+    pub delivery_status: DeliveryStatus,
 }
 
 impl ChatMessage {
@@ -126,6 +145,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: false,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 
@@ -141,6 +161,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: false,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 
@@ -156,6 +177,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: false,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 
@@ -171,6 +193,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: true,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 
@@ -223,6 +246,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: false,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 
@@ -238,6 +262,7 @@ impl ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             is_action: false,
             reactions: HashMap::new(),
+            delivery_status: DeliveryStatus::Sent,
         }
     }
 }

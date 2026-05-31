@@ -53,6 +53,11 @@ struct Envelope {
     recipient: Option<String>,
     #[serde(default)]
     meta: EnvelopeMeta,
+    /// Sender-generated message UUID. When present on a unicast DM, the relay
+    /// sends an ACK back to the sender confirming the frame reached the
+    /// recipient's outbound channel.
+    #[serde(default)]
+    message_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -222,6 +227,10 @@ impl RelayState {
                     && let Some(target) = self.lookup(recipient).await
                 {
                     self.unicast(target, content).await;
+                    // ACK back to the sender when the message carried an ID.
+                    if let Some(mid) = env.message_id {
+                        self.send_ack(from, mid, recipient.to_string()).await;
+                    }
                     return;
                 }
 
@@ -230,6 +239,26 @@ impl RelayState {
             // Unparseable payloads keep the old dumb-relay behavior.
             Err(_) => self.broadcast(from, content).await,
         }
+    }
+
+    /// Send a delivery-receipt ACK to the original sender after a successful
+    /// unicast. The ACK is in-flight only — the relay holds no message state.
+    async fn send_ack(&self, sender_id: ClientId, message_id: String, recipient: String) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let ack = serde_json::json!({
+            "type": "ACK",
+            "payload": "",
+            "channel": "global",
+            "meta": { "sender": "_relay", "timestamp": ts },
+            "message_id": message_id,
+            "recipient": recipient,
+            "encrypted": false
+        })
+        .to_string();
+        self.unicast(sender_id, ack).await;
     }
 
     /// Resolve a username to a connected client id.
@@ -436,6 +465,13 @@ mod tests {
         )
     }
 
+    /// Build a DM with an explicit `message_id` so the relay sends an ACK.
+    fn dm_json_with_id(sender: &str, recipient: &str, id: &str) -> String {
+        format!(
+            r#"{{"type":"MSG","payload":"ciphertext","channel":"dm:{sender}:{recipient}","meta":{{"sender":"{sender}","timestamp":0}},"encrypted":true,"recipient":"{recipient}","action":false,"message_id":"{id}"}}"#
+        )
+    }
+
     #[tokio::test]
     async fn rejects_connections_beyond_capacity() {
         let state = RelayState::with_limits(2, 8);
@@ -612,5 +648,65 @@ mod tests {
         // AUTH was processed) must not leave a dangling name in the index.
         state.set_username(999, "ghost").await;
         assert_eq!(state.lookup("ghost").await, None);
+    }
+
+    #[tokio::test]
+    async fn ack_sent_to_sender_on_dm_unicast() {
+        let state = RelayState::with_limits(10, 8);
+        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+
+        state.relay(alice, auth_json("alice")).await;
+        state.relay(_bob, auth_json("bob")).await;
+        while alice_rx.try_recv().is_ok() {}
+        while bob_rx.try_recv().is_ok() {}
+
+        state
+            .relay(alice, dm_json_with_id("alice", "bob", "test-uuid-1"))
+            .await;
+
+        // Bob receives the DM.
+        let got = bob_rx.try_recv().expect("bob should receive the DM");
+        assert!(got.contains("\"recipient\":\"bob\""));
+
+        // Alice receives an ACK with the original message_id.
+        let ack = alice_rx.try_recv().expect("sender should receive an ACK");
+        assert!(ack.contains("\"type\":\"ACK\""), "ACK type: {ack}");
+        assert!(ack.contains("\"message_id\":\"test-uuid-1\""), "ACK id: {ack}");
+        assert!(ack.contains("\"recipient\":\"bob\""), "ACK recipient: {ack}");
+    }
+
+    #[tokio::test]
+    async fn no_ack_when_message_id_absent() {
+        let state = RelayState::with_limits(10, 8);
+        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+
+        state.relay(alice, auth_json("alice")).await;
+        state.relay(_bob, auth_json("bob")).await;
+        while alice_rx.try_recv().is_ok() {}
+        while bob_rx.try_recv().is_ok() {}
+
+        // DM without a message_id — relay must not send an ACK.
+        state.relay(alice, dm_json("alice", "bob")).await;
+        bob_rx.try_recv().expect("bob should receive the DM");
+        assert!(alice_rx.try_recv().is_err(), "no ACK when message_id absent");
+    }
+
+    #[tokio::test]
+    async fn no_ack_on_broadcast_fallback() {
+        let state = RelayState::with_limits(10, 8);
+        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
+        // Bystander receives the broadcast but alice should get no ACK.
+        let (_bystander, _bystander_rx) = state.try_register_client().await.unwrap();
+
+        state.relay(alice, auth_json("alice")).await;
+        while alice_rx.try_recv().is_ok() {}
+
+        // DM to an unknown recipient falls back to broadcast — no ACK.
+        state
+            .relay(alice, dm_json_with_id("alice", "nobody", "test-uuid-2"))
+            .await;
+        assert!(alice_rx.try_recv().is_err(), "no ACK on broadcast fallback");
     }
 }
