@@ -794,6 +794,15 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
                 app::MessageSeverity::Info,
             ));
         }
+        NetworkEvent::GroupSenderKeyRotated { group_id, sender } => {
+            app.add_message(ChatMessage::system_with_severity(
+                format!(
+                    "[{}] {}'s sender key rotated — they need to re-run /groupkey",
+                    group_id, sender
+                ),
+                app::MessageSeverity::Warning,
+            ));
+        }
         NetworkEvent::Reaction {
             sender,
             channel_id,

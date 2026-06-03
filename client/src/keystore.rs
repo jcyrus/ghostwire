@@ -178,6 +178,15 @@ pub struct SenderKeyState {
     pub chain_key: [u8; 32],
     /// Message counter (monotonic)
     pub counter: u64,
+    /// DH ratchet public key (v0.7.0). Included in every outgoing group message
+    /// and in the SENDER_KEY distribution payload. Recipients compare it against
+    /// the stored value to detect when the sender has run `/groupkey`.
+    pub ratchet_public: PublicKey,
+    /// DH ratchet secret (v0.7.0). Present only on our own sender key (`generate`);
+    /// set to a zero sentinel on received distributions (`from_distribution`).
+    /// Stored for future group DH ratchet steps; not yet used in this version.
+    #[allow(dead_code)]
+    pub ratchet_secret: StaticSecret,
 }
 
 impl SenderKeyState {
@@ -187,19 +196,26 @@ impl SenderKeyState {
         let mut chain_key = [0u8; 32];
         rand::fill(&mut key);
         rand::fill(&mut chain_key);
+        let ratchet_kp = generate_ephemeral_keypair();
         Self {
             key,
             chain_key,
             counter: 0,
+            ratchet_public: ratchet_kp.public,
+            ratchet_secret: ratchet_kp.secret,
         }
     }
 
     /// Create from a received distribution message.
-    pub fn from_distribution(key: [u8; 32], chain_key: [u8; 32]) -> Self {
+    /// `ratchet_public` is the sender's current DH ratchet public key (v0.7.0).
+    /// Pass `PublicKey::from([0u8; 32])` when decoding a v0.6 64-byte payload.
+    pub fn from_distribution(key: [u8; 32], chain_key: [u8; 32], ratchet_public: PublicKey) -> Self {
         Self {
             key,
             chain_key,
             counter: 0,
+            ratchet_public,
+            ratchet_secret: StaticSecret::from([0u8; 32]),
         }
     }
 
@@ -619,12 +635,15 @@ impl KeyStore {
     }
 
     /// Store a sender key received from another group member.
+    /// `ratchet_public` is the sender's current DH ratchet pub (v0.7.0); pass
+    /// `PublicKey::from([0u8;32])` for v0.6 64-byte distributions.
     pub fn store_sender_key(
         &mut self,
         group_id: &str,
         sender: &str,
         key: [u8; 32],
         chain_key: [u8; 32],
+        ratchet_public: PublicKey,
     ) {
         let group = self
             .group_sender_keys
@@ -632,8 +651,11 @@ impl KeyStore {
             .or_default();
 
         if let Some(existing) = group.get(sender) {
-            // Ignore stale/duplicate distributions to avoid resetting an active receive chain.
-            if existing.key == key && existing.chain_key == chain_key {
+            // Ignore stale/duplicate distributions (same key, chain, and ratchet pub).
+            if existing.key == key
+                && existing.chain_key == chain_key
+                && existing.ratchet_public.as_bytes() == ratchet_public.as_bytes()
+            {
                 return;
             }
             if existing.counter > 0 {
@@ -648,8 +670,28 @@ impl KeyStore {
 
         group.insert(
             sender.to_string(),
-            SenderKeyState::from_distribution(key, chain_key),
+            SenderKeyState::from_distribution(key, chain_key, ratchet_public),
         );
+    }
+
+    /// Return the DH ratchet public key for our own sender key in `group_id`.
+    pub fn get_group_send_ratchet_public(&self, group_id: &str) -> Option<PublicKey> {
+        self.our_sender_keys.get(group_id).map(|s| s.ratchet_public)
+    }
+
+    /// Return the stored ratchet public key for a peer's sender key in `group_id`.
+    pub fn get_group_sender_ratchet_public(&self, group_id: &str, sender: &str) -> Option<PublicKey> {
+        self.group_sender_keys
+            .get(group_id)
+            .and_then(|g| g.get(sender))
+            .map(|s| s.ratchet_public)
+    }
+
+    /// Remove a peer's sender key for `group_id` (called on rotation detection).
+    pub fn remove_sender_key(&mut self, group_id: &str, sender: &str) {
+        if let Some(group) = self.group_sender_keys.get_mut(group_id) {
+            group.remove(sender);
+        }
     }
 
     /// Derive the next group-receive key without mutating state.
@@ -730,7 +772,7 @@ mod tests {
         let _ = store.get_or_create_sender_key(group_id);
         assert!(store.derive_group_send_key(group_id).is_some());
 
-        store.store_sender_key(group_id, sender, [1u8; 32], [2u8; 32]);
+        store.store_sender_key(group_id, sender, [1u8; 32], [2u8; 32], PublicKey::from([0u8; 32]));
         assert!(store.has_sender_key(group_id, sender));
 
         store.rotate_ephemeral_key();
@@ -956,6 +998,56 @@ mod tests {
             !store.known_peer_keys.contains_key("peer0"),
             "oldest peer should have been evicted"
         );
+    }
+
+    // ── Group sender-key ratchet tests (v0.7.0) ─────────────────────────────
+
+    #[test]
+    fn test_sender_key_state_generate_has_ratchet_public() {
+        let state = SenderKeyState::generate();
+        assert_ne!(state.ratchet_public.as_bytes(), &[0u8; 32], "ratchet_public must be non-zero");
+    }
+
+    #[test]
+    fn test_store_sender_key_96_byte_payload() {
+        let mut store = KeyStore::new();
+        let rp = generate_ephemeral_keypair().public;
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp);
+        let stored = store.get_group_sender_ratchet_public("group:ops", "alice").unwrap();
+        assert_eq!(stored.as_bytes(), rp.as_bytes());
+    }
+
+    #[test]
+    fn test_store_sender_key_64_byte_fallback() {
+        let mut store = KeyStore::new();
+        // 64-byte v0.6 distribution: sentinel zero ratchet pub
+        store.store_sender_key("group:ops", "bob", [3u8; 32], [4u8; 32], PublicKey::from([0u8; 32]));
+        let stored = store.get_group_sender_ratchet_public("group:ops", "bob").unwrap();
+        assert_eq!(stored.as_bytes(), &[0u8; 32], "sentinel must be zero");
+    }
+
+    #[test]
+    fn test_group_sender_key_rotation_detected() {
+        let mut store = KeyStore::new();
+        let rp_a = generate_ephemeral_keypair().public;
+        let rp_b = generate_ephemeral_keypair().public;
+        assert_ne!(rp_a.as_bytes(), rp_b.as_bytes());
+
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp_a);
+        // Simulate /groupkey: new distribution with rp_b → rotation detected externally
+        // (the rotation is detected in network.rs; here we just verify remove_sender_key works)
+        store.remove_sender_key("group:ops", "alice");
+        assert!(!store.has_sender_key("group:ops", "alice"));
+    }
+
+    #[test]
+    fn test_group_sender_key_unchanged_no_rotation() {
+        let mut store = KeyStore::new();
+        let rp = generate_ephemeral_keypair().public;
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp);
+        let stored = store.get_group_sender_ratchet_public("group:ops", "alice").unwrap();
+        // Same ratchet pub → no rotation
+        assert_eq!(stored.as_bytes(), rp.as_bytes());
     }
 
     // ── DH Double Ratchet tests (v0.7.0) ────────────────────────────────────

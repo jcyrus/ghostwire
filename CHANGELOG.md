@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-03
+
+### Added
+
+- **DH Double Ratchet for DMs** — Pairwise direct messages now use a Signal-style
+  Double Ratchet bootstrapped from per-epoch X25519 init keys advertised in
+  `KEY_EXCHANGE`. A single `kdf_rk` HKDF step folds the DH output into the
+  session's initial send/recv chains, and `perform_recv_dh_ratchet` advances the
+  recv chain when the peer rotates their ratchet key. v0.6 clients that omit
+  `ratchet_key` fall back to symmetric-only ratchet silently.
+- **Group sender-key ratchet detection** — SENDER_KEY distribution payloads expand
+  from 64 to 96 bytes to carry the sender's current DH ratchet public key. Group
+  messages include `ratchet_key` in the wire frame; receivers that detect a key
+  change emit a `GroupSenderKeyRotated` event and remove the stale distribution,
+  prompting the user to re-run `/groupkey`.
+- **Per-IP rate limiting** — The relay now limits each IP to one new WebSocket
+  connection per 6 seconds (burst 3) via `tower_governor`. AUTH flood mitigation
+  caps `AUTH` messages at 60 per IP per 60-second sliding window; over-limit
+  `AUTH` frames are silently dropped (connection stays open).
+- **Relay-level delivery indicators** — `✓` (dark gray) appears on sent DMs; `✓✓`
+  (cyan) appears after the relay ACKs delivery to the recipient's channel.
+
+### Changed
+
+- **Wire format** — `WireMessage` gains `ratchet_key: Option<String>` (omitted when
+  `None`). Old clients ignore the new field; new clients tolerate its absence.
+- **SENDER_KEY payload** grows from 64 to 96 bytes. v0.6 receivers reject 96-byte
+  distributions; all group members must upgrade to v0.7 before group messaging
+  resumes after a `/groupkey` redistribution.
+
+### Security
+
+- `MessageType::Unknown` (`#[serde(other)]`) silently discards unrecognised message
+  types, preventing parse errors when v0.7+ clients communicate with older peers.
+
 ## [0.6.0] - 2026-05-31
 
 ### Added
