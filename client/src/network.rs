@@ -504,8 +504,10 @@ pub async fn network_task(
                                     match store.get_session(recip) {
                                         Ok(session) => {
                                             let (msg_key, new_chain) = session.derive_send_key();
-                                            // Capture ratchet public key before the lock is dropped.
-                                            dm_ratchet_key = Some(encode_public_key(&session.ratchet_public));
+                                            // Only include ratchet_key for v0.7+ peers with DH ratchet active.
+                                            if session.dh_ratchet_enabled {
+                                                dm_ratchet_key = Some(encode_public_key(&session.ratchet_public));
+                                            }
                                             match encrypt_message(&content, &msg_key) {
                                                 Ok(encrypted_payload) => {
                                                     tracing::debug!("Encrypted message to {}", recip);
@@ -946,6 +948,30 @@ fn handle_wire_message(
                 let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                 if msg.channel.starts_with("group:") {
                     if store.has_sender_key(&msg.channel, &msg.meta.sender) {
+                        // Sender key rotation detection (v0.7.0): check BEFORE deriving
+                        // recv key / decrypting. When the sender re-runs /groupkey, the
+                        // message is encrypted under the new distribution and decryption
+                        // with the stale one fails — so the Ok branch is never reached.
+                        // Detecting the ratchet key mismatch up front lets us surface the
+                        // warning and skip the doomed decrypt attempt.
+                        if let Some(rk_b64) = &msg.ratchet_key
+                            && let Ok(received_rk) = decode_public_key(rk_b64)
+                            && received_rk.as_bytes() != &[0u8; 32]
+                            && let Some(stored_rk) = store.get_group_sender_ratchet_public(
+                                &msg.channel,
+                                &msg.meta.sender,
+                            )
+                            && stored_rk.as_bytes() != &[0u8; 32]
+                            && stored_rk.as_bytes() != received_rk.as_bytes()
+                        {
+                            store.remove_sender_key(&msg.channel, &msg.meta.sender);
+                            let _ = event_tx.send(NetworkEvent::GroupSenderKeyRotated {
+                                group_id: msg.channel.clone(),
+                                sender: msg.meta.sender.clone(),
+                            });
+                            return;
+                        }
+
                         let Some((msg_key, new_chain)) =
                             store.derive_group_recv_key(&msg.channel, &msg.meta.sender)
                         else {
@@ -963,27 +989,6 @@ fn handle_wire_message(
                                     &msg.meta.sender,
                                     new_chain,
                                 );
-
-                                // Sender key rotation detection (v0.7.0): if the message
-                                // carries a non-zero ratchet key that differs from the stored
-                                // one, the sender has re-run /groupkey. Remove the stale
-                                // distribution so future messages require a fresh one.
-                                if let Some(rk_b64) = &msg.ratchet_key
-                                    && let Ok(received_rk) = decode_public_key(rk_b64)
-                                    && received_rk.as_bytes() != &[0u8; 32]
-                                    && let Some(stored_rk) = store.get_group_sender_ratchet_public(
-                                        &msg.channel,
-                                        &msg.meta.sender,
-                                    )
-                                    && stored_rk.as_bytes() != &[0u8; 32]
-                                    && stored_rk.as_bytes() != received_rk.as_bytes()
-                                {
-                                    store.remove_sender_key(&msg.channel, &msg.meta.sender);
-                                    let _ = event_tx.send(NetworkEvent::GroupSenderKeyRotated {
-                                        group_id: msg.channel.clone(),
-                                        sender: msg.meta.sender.clone(),
-                                    });
-                                }
 
                                 (plaintext, message_id)
                             }
@@ -1046,9 +1051,10 @@ fn handle_wire_message(
                         extracted_nonce = Some(nonce);
                     }
 
-                    // DH ratchet step (v0.7.0): if the message carries a new ratchet public
-                    // key, advance the recv chain before the symmetric ratchet step.
-                    if let Some(rk_b64) = &msg.ratchet_key
+                    // DH ratchet step (v0.7.0): only for sessions where both peers
+                    // exchanged init ratchet keys. Skipped for v0.6 fallback sessions.
+                    if session.dh_ratchet_enabled
+                        && let Some(rk_b64) = &msg.ratchet_key
                         && let Ok(their_new_rk) = decode_public_key(rk_b64)
                         && their_new_rk.as_bytes() != session.their_ratchet_public.as_bytes()
                     {

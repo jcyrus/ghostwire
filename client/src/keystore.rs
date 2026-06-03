@@ -85,6 +85,9 @@ pub struct PeerSession {
     /// Last known DH ratchet public key from the peer. When an incoming DM
     /// carries a different value, `perform_recv_dh_ratchet` is triggered.
     pub their_ratchet_public: PublicKey,
+    /// `true` for v0.7+ peers that exchanged init ratchet keys; `false` for
+    /// v0.6 fallback sessions. Prevents DH ratchet operations on legacy peers.
+    pub dh_ratchet_enabled: bool,
 }
 
 impl PeerSession {
@@ -422,7 +425,7 @@ impl KeyStore {
         //
         // If the peer's init ratchet key is absent (v0.6 client), skip the DH
         // step entirely and fall back to symmetric-only ratchet.
-        let (root_key, ratchet_secret, ratchet_public, their_ratchet_public) =
+        let (root_key, ratchet_secret, ratchet_public, their_ratchet_public, dh_ratchet_enabled) =
             if let Some(their_init_ratchet) = self.take_peer_ratchet_key(username) {
                 let dh_init = self
                     .ratchet_init_keypair
@@ -444,17 +447,27 @@ impl KeyStore {
                 rp_hkdf.expand(s_lbl, &mut send_chain).expect("HKDF");
                 rp_hkdf.expand(r_lbl, &mut recv_chain).expect("HKDF");
 
-                // Clone the init ratchet secret into the session so `perform_recv_dh_ratchet`
-                // can use it when the peer sends with a rotated ratchet key.
-                // (StaticSecret implements Clone in x25519-dalek 2.0 with static_secrets feature)
-                let ratchet_secret = self.ratchet_init_keypair.secret.clone();
-                let ratchet_public = self.ratchet_init_keypair.public;
-                (root_key, ratchet_secret, ratchet_public, their_init_ratchet)
+                // Initiator (lex-lower ratchet pub) pre-advances the send chain immediately
+                // so the first outbound DM carries a key the peer has never seen.
+                // ECDH commutativity: DH(new_secret, their_init) == DH(their_init_secret, new_pub),
+                // so the responder's perform_recv_dh_ratchet derives the matching recv chain.
+                let init_secret = self.ratchet_init_keypair.secret.clone();
+                let init_public = self.ratchet_init_keypair.public;
+                let (root_key, ratchet_secret, ratchet_public) = if our_rp < their_rp {
+                    let new_kp = generate_ephemeral_keypair();
+                    let dh = new_kp.secret.diffie_hellman(&their_init_ratchet);
+                    let (new_root, new_send) = kdf_rk(&root_key, dh.as_bytes());
+                    send_chain.copy_from_slice(&new_send);
+                    (new_root, new_kp.secret, new_kp.public)
+                } else {
+                    (root_key, init_secret, init_public)
+                };
+                (root_key, ratchet_secret, ratchet_public, their_init_ratchet, true)
             } else {
-                // v0.6 fallback: no DH ratchet. Generate a placeholder keypair so
-                // outbound DMs always carry a valid ratchet_key field.
+                // v0.6 fallback: no DH ratchet. dh_ratchet_enabled=false prevents the
+                // placeholder ratchet_public from being sent or triggering ratchet steps.
                 let fallback = generate_ephemeral_keypair();
-                (session_keys.chain_key, fallback.secret, fallback.public, their_public)
+                (session_keys.chain_key, fallback.secret, fallback.public, their_public, false)
             };
 
         let now = Utc::now();
@@ -473,6 +486,7 @@ impl KeyStore {
             ratchet_secret,
             ratchet_public,
             their_ratchet_public,
+            dh_ratchet_enabled,
         };
 
         self.sessions.insert(username.to_string(), session);
@@ -1082,12 +1096,27 @@ mod tests {
         let mut bob = KeyStore::new();
         setup_ratchet_sessions(&mut alice, &mut bob);
 
+        // Determine initiator by lex-order of ratchet init pubs (same rule as establish_session).
+        let alice_rk = crate::crypto::decode_public_key(&alice.get_our_ratchet_init_public_key()).unwrap();
+        let bob_rk = crate::crypto::decode_public_key(&bob.get_our_ratchet_init_public_key()).unwrap();
+        let alice_is_initiator = alice_rk.as_bytes() < bob_rk.as_bytes();
+
         let a = alice.get_session("bob").unwrap();
         let b = bob.get_session("alice").unwrap();
 
+        assert!(a.dh_ratchet_enabled && b.dh_ratchet_enabled, "both sessions should have DH ratchet enabled");
         assert_ne!(a.send_chain, b.send_chain, "roles must be distinct");
-        assert_eq!(a.send_chain, b.recv_chain, "alice send == bob recv");
-        assert_eq!(a.recv_chain, b.send_chain, "alice recv == bob send");
+        if alice_is_initiator {
+            // Alice pre-advanced her send chain via DH; it won't match Bob's recv until
+            // Bob processes Alice's first message and runs perform_recv_dh_ratchet.
+            assert_ne!(a.send_chain, b.recv_chain, "initiator pre-advanced; not yet synced");
+            assert_eq!(a.recv_chain, b.send_chain, "alice recv == bob send");
+        } else {
+            assert_eq!(a.send_chain, b.recv_chain, "alice send == bob recv");
+            // Bob pre-advanced his send chain; it won't match Alice's recv until
+            // Alice processes Bob's first message.
+            assert_ne!(a.recv_chain, b.send_chain, "initiator (bob) pre-advanced; not yet synced");
+        }
     }
 
     #[test]
@@ -1129,7 +1158,9 @@ mod tests {
 
         let plaintext = "hello ratchet";
 
-        // --- Message 1: Alice sends with INIT ratchet key (no DH step on Bob's side) ---
+        // --- Message 1: Alice sends. If Alice is the initiator (lex-lower ratchet pub),
+        // her ratchet_public is already pre-advanced; Bob detects it and DH-ratchets.
+        // If Bob is the initiator, Alice's pub matches what Bob has stored → no DH step. ---
         let (ciphertext1, alice_ratchet_pub1) = {
             let s = alice.get_session("bob").unwrap();
             let rk_pub = s.ratchet_public;
@@ -1139,42 +1170,32 @@ mod tests {
             (ct, rk_pub)
         };
 
-        // Bob receives msg 1 — ratchet pub == their_ratchet_public → no DH step.
         {
             let s = bob.get_session("alice").unwrap();
-            // No DH step (same pub)
-            assert_eq!(s.their_ratchet_public.as_bytes(), alice_ratchet_pub1.as_bytes());
+            if alice_ratchet_pub1.as_bytes() != s.their_ratchet_public.as_bytes() {
+                // Alice is the initiator — pre-advanced ratchet key triggers a DH step.
+                s.perform_recv_dh_ratchet(alice_ratchet_pub1);
+            }
             let (msg_key, nc) = s.derive_recv_key();
             let got = decrypt_message(&ciphertext1, &msg_key).unwrap();
             s.commit_recv(nc);
             assert_eq!(got, plaintext);
         }
 
-        // --- Message 2: Alice manually rotates her ratchet key ---
-        let new_kp = generate_ephemeral_keypair();
-        let alice_ratchet_pub2 = new_kp.public;
-        let (ciphertext2, _) = {
+        // --- Message 2: Alice sends again with the same ratchet key; symmetric ratchet only. ---
+        let (ciphertext2, alice_ratchet_pub2) = {
             let s = alice.get_session("bob").unwrap();
-            // Advance alice's send chain via DH with bob's current ratchet pub
-            let dh = new_kp.secret.diffie_hellman(&s.their_ratchet_public);
-            let (new_root, new_send) = kdf_rk(&s.root_key, dh.as_bytes());
-            s.root_key = new_root;
-            s.send_chain = new_send;
-            s.send_counter = 0;
-            s.ratchet_secret = new_kp.secret;
-            s.ratchet_public = alice_ratchet_pub2;
-
+            let rk_pub = s.ratchet_public;
             let (msg_key, nc) = s.derive_send_key();
             let ct = encrypt_message(plaintext, &msg_key).unwrap();
             s.commit_send(nc);
-            (ct, alice_ratchet_pub2)
+            (ct, rk_pub)
         };
 
-        // Bob receives msg 2 — new ratchet pub → perform_recv_dh_ratchet.
         {
             let s = bob.get_session("alice").unwrap();
-            assert_ne!(s.their_ratchet_public.as_bytes(), alice_ratchet_pub2.as_bytes());
-            s.perform_recv_dh_ratchet(alice_ratchet_pub2);
+            // Same ratchet pub as msg 1 → no additional DH step.
+            assert_eq!(alice_ratchet_pub2.as_bytes(), s.their_ratchet_public.as_bytes());
             let (msg_key, nc) = s.derive_recv_key();
             let got = decrypt_message(&ciphertext2, &msg_key).unwrap();
             s.commit_recv(nc);
