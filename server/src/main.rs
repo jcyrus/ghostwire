@@ -3,6 +3,7 @@
 
 mod relay;
 mod status_page;
+mod util;
 
 use axum::{
     Router,
@@ -12,6 +13,8 @@ use axum::{
     routing::get,
 };
 use relay::RelayState;
+use std::sync::Arc;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
 /// Health check endpoint
@@ -27,12 +30,18 @@ async fn root(State(state): State<RelayState>, headers: HeaderMap) -> Html<Strin
 }
 
 /// WebSocket upgrade handler
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<RelayState>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<RelayState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Shuttle does not expose ConnectInfo; rely on Fly-Client-IP / XFF headers.
+    let from_ip = util::real_ip(&headers, None);
     // Enforce the frame-size cap at the protocol layer; handle_websocket also
     // guards relay::MAX_MESSAGE_BYTES as defense in depth.
     ws.max_message_size(relay::MAX_MESSAGE_BYTES)
         .max_frame_size(relay::MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| relay::handle_websocket(socket, state))
+        .on_upgrade(move |socket| relay::handle_websocket(socket, state, from_ip))
 }
 
 /// Redirect to the install script
@@ -54,6 +63,16 @@ async fn install_ps1_redirect() -> impl IntoResponse {
 async fn main() -> shuttle_axum::ShuttleAxum {
     // Shuttle handles tracing initialization, so we don't need to do it here
 
+    // Connection-level rate limit: 1 new WS connection per 6 s ≈ 10/min, burst 3.
+    let mut governor_builder = GovernorConfigBuilder::default();
+    governor_builder.per_second(6).burst_size(3);
+    let governor_conf = Arc::new(
+        governor_builder
+            .key_extractor(util::RealIpExtractor)
+            .finish()
+            .expect("governor config"),
+    );
+
     // Create shared state
     let state = RelayState::new();
 
@@ -61,7 +80,10 @@ async fn main() -> shuttle_axum::ShuttleAxum {
     let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health_check))
-        .route("/ws", get(ws_handler))
+        .route(
+            "/ws",
+            get(ws_handler).layer(GovernorLayer::new(governor_conf)),
+        )
         .route("/install", get(install_redirect))
         .route("/install.ps1", get(install_ps1_redirect))
         .with_state(state)

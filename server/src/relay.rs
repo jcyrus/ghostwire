@@ -15,10 +15,12 @@ use axum::extract::ws::{Message, WebSocket};
 use futures::{stream::StreamExt, SinkExt};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
@@ -71,6 +73,8 @@ struct ClientHandle {
     tx: mpsc::Sender<Arc<str>>,
     /// Username learned from this client's AUTH message, if any.
     username: Option<String>,
+    /// Real client IP (from `util::real_ip`), stored for pruning `auth_rate` on disconnect.
+    from_ip: IpAddr,
 }
 
 /// All shared, lock-protected relay state. Keeping the client table and the
@@ -93,6 +97,9 @@ pub struct RelayState {
     max_clients: usize,
     /// Per-client outbound buffer size (see [`DEFAULT_CHANNEL_CAPACITY`]).
     channel_capacity: usize,
+    /// Per-IP AUTH rate tracking: IP → (count, window_start).
+    /// Sliding 60-second window; see `check_and_record_auth`.
+    auth_rate: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
 }
 
 impl RelayState {
@@ -108,7 +115,31 @@ impl RelayState {
             next_client_id: Arc::new(AtomicUsize::new(0)),
             max_clients,
             channel_capacity,
+            auth_rate: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Returns `true` if this AUTH message is within the rate limit for `ip`,
+    /// `false` if it should be silently dropped.
+    /// Limit: 60 AUTH messages per IP per 60-second sliding window.
+    pub fn check_and_record_auth(&self, ip: IpAddr) -> bool {
+        self.check_and_record_auth_with(ip, 60, Duration::from_secs(60))
+    }
+
+    /// Parameterised version used by tests to avoid real-time delays.
+    fn check_and_record_auth_with(&self, ip: IpAddr, limit: u32, window: Duration) -> bool {
+        let mut map = self.auth_rate.lock().unwrap();
+        let now = Instant::now();
+        let entry = map.entry(ip).or_insert((0u32, now));
+        if now.duration_since(entry.1) >= window {
+            *entry = (1u32, now);
+            return true;
+        }
+        if entry.0 >= limit {
+            return false;
+        }
+        entry.0 += 1;
+        true
     }
 
     /// Get the next available client ID (lock-free).
@@ -120,7 +151,10 @@ impl RelayState {
     /// Returns `None` if the server is at capacity, so the caller can reject the
     /// connection. The capacity check and insert happen under a single write
     /// lock so they are atomic.
-    async fn try_register_client(&self) -> Option<(ClientId, mpsc::Receiver<Arc<str>>)> {
+    async fn try_register_client(
+        &self,
+        from_ip: IpAddr,
+    ) -> Option<(ClientId, mpsc::Receiver<Arc<str>>)> {
         let (tx, rx) = mpsc::channel(self.channel_capacity);
 
         let mut reg = self.registry.write().await;
@@ -138,6 +172,7 @@ impl RelayState {
             ClientHandle {
                 tx,
                 username: None,
+                from_ip,
             },
         );
         info!("Client {} connected. Total clients: {}", id, reg.clients.len());
@@ -147,16 +182,25 @@ impl RelayState {
 
     /// Unregister a client and drop any username it owned.
     async fn unregister_client(&self, id: ClientId) {
-        let mut reg = self.registry.write().await;
-        if let Some(handle) = reg.clients.remove(&id)
-            && let Some(name) = handle.username
-            // Only clear the name index if it still points at this client
-            // (a reconnect under the same name may have re-claimed it).
-            && reg.names.get(&name) == Some(&id)
-        {
-            reg.names.remove(&name);
+        // Acquire registry lock, clean up name index, then release before
+        // touching auth_rate (consistent lock-acquisition order avoids deadlocks).
+        let from_ip = {
+            let mut reg = self.registry.write().await;
+            let maybe_handle = reg.clients.remove(&id);
+            if let Some(ref handle) = maybe_handle
+                && let Some(ref name) = handle.username
+                // Only clear the name index if it still points at this client
+                // (a reconnect under the same name may have re-claimed it).
+                && reg.names.get(name.as_str()) == Some(&id)
+            {
+                reg.names.remove(name.as_str());
+            }
+            info!("Client {} disconnected. Total clients: {}", id, reg.clients.len());
+            maybe_handle.map(|h| h.from_ip)
+        };
+        if let Some(ip) = from_ip {
+            self.auth_rate.lock().unwrap().remove(&ip);
         }
-        info!("Client {} disconnected. Total clients: {}", id, reg.clients.len());
     }
 
     /// Associate a username (from AUTH) with a client id.
@@ -210,11 +254,15 @@ impl RelayState {
 
     /// Parse and relay one inbound message: learn usernames from AUTH, unicast
     /// routable DMs, and broadcast everything else.
-    async fn relay(&self, from: ClientId, content: String) {
+    async fn relay(&self, from: ClientId, from_ip: IpAddr, content: String) {
         match serde_json::from_str::<Envelope>(&content) {
             Ok(env) => {
-                // Learn the sender's username from its AUTH announcement.
+                // Learn the sender's username from its AUTH announcement,
+                // subject to per-IP rate limiting to mitigate AUTH floods.
                 if env.msg_type == "AUTH" {
+                    if !self.check_and_record_auth(from_ip) {
+                        return; // silently drop; connection stays open
+                    }
                     self.set_username(from, &env.meta.sender).await;
                 }
 
@@ -342,12 +390,12 @@ impl Default for RelayState {
 }
 
 /// Handle a WebSocket connection
-pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
+pub async fn handle_websocket(socket: WebSocket, state: RelayState, from_ip: IpAddr) {
     // Split the WebSocket into sender and receiver
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     // Register this client (rejecting if the relay is at capacity)
-    let (client_id, mut broadcast_rx) = match state.try_register_client().await {
+    let (client_id, mut broadcast_rx) = match state.try_register_client(from_ip).await {
         Some(registration) => registration,
         None => {
             // Politely close: server is full.
@@ -407,7 +455,7 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
 
                     // Parse-and-route. text is Utf8Bytes (axum 0.8); .to_string()
                     // is the required conversion. relay() decides unicast vs broadcast.
-                    state_clone.relay(client_id, text.to_string()).await;
+                    state_clone.relay(client_id, from_ip, text.to_string()).await;
                 }
                 Ok(Message::Close(_)) => {
                     info!("Client {} sent close frame", client_id);
@@ -451,6 +499,14 @@ pub async fn handle_websocket(socket: WebSocket, state: RelayState) {
 mod tests {
     use super::*;
 
+    fn test_ip() -> IpAddr {
+        IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    }
+
+    fn test_ip2() -> IpAddr {
+        "10.0.0.1".parse().unwrap()
+    }
+
     /// Build an AUTH wire message for `user` (matches the client's format).
     fn auth_json(user: &str) -> String {
         format!(
@@ -476,14 +532,14 @@ mod tests {
     async fn rejects_connections_beyond_capacity() {
         let state = RelayState::with_limits(2, 8);
 
-        let first = state.try_register_client().await;
-        let second = state.try_register_client().await;
+        let first = state.try_register_client(test_ip()).await;
+        let second = state.try_register_client(test_ip()).await;
         assert!(first.is_some());
         assert!(second.is_some());
         assert_eq!(state.client_count().await, 2);
 
         // Third connection is over capacity and must be rejected.
-        assert!(state.try_register_client().await.is_none());
+        assert!(state.try_register_client(test_ip()).await.is_none());
         assert_eq!(state.client_count().await, 2);
 
         drop((first, second));
@@ -494,8 +550,8 @@ mod tests {
         let state = RelayState::with_limits(10, 2);
 
         // Slow client: registered but never drains its receiver.
-        let (_slow_id, _slow_rx) = state.try_register_client().await.unwrap();
-        let (sender_id, _sender_rx) = state.try_register_client().await.unwrap();
+        let (_slow_id, _slow_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (sender_id, _sender_rx) = state.try_register_client(test_ip()).await.unwrap();
         assert_eq!(state.client_count().await, 2);
 
         // Broadcast more than the slow client's buffer (capacity 2) can hold.
@@ -510,8 +566,8 @@ mod tests {
     async fn broadcast_delivers_to_other_clients() {
         let state = RelayState::with_limits(10, 8);
 
-        let (sender_id, _sender_rx) = state.try_register_client().await.unwrap();
-        let (_recipient_id, mut recipient_rx) = state.try_register_client().await.unwrap();
+        let (sender_id, _sender_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_recipient_id, mut recipient_rx) = state.try_register_client(test_ip()).await.unwrap();
 
         state.broadcast(sender_id, "hello".to_string()).await;
 
@@ -524,7 +580,7 @@ mod tests {
     async fn broadcast_does_not_echo_to_sender() {
         let state = RelayState::with_limits(10, 8);
 
-        let (sender_id, mut sender_rx) = state.try_register_client().await.unwrap();
+        let (sender_id, mut sender_rx) = state.try_register_client(test_ip()).await.unwrap();
         state.broadcast(sender_id, "no echo".to_string()).await;
 
         assert!(sender_rx.try_recv().is_err());
@@ -534,14 +590,14 @@ mod tests {
     async fn dm_is_unicast_only_to_recipient() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
-        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
-        let (_carol, mut carol_rx) = state.try_register_client().await.unwrap();
+        let (alice, mut alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_carol, mut carol_rx) = state.try_register_client(test_ip()).await.unwrap();
 
         // Everyone authenticates so the relay learns the name -> id map.
-        state.relay(alice, auth_json("alice")).await;
-        state.relay(_bob, auth_json("bob")).await;
-        state.relay(_carol, auth_json("carol")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
+        state.relay(_bob, test_ip(), auth_json("bob")).await;
+        state.relay(_carol, test_ip(), auth_json("carol")).await;
 
         // Drain the AUTH broadcasts each client received.
         while bob_rx.try_recv().is_ok() {}
@@ -549,7 +605,7 @@ mod tests {
         while alice_rx.try_recv().is_ok() {}
 
         // Alice DMs bob.
-        state.relay(alice, dm_json("alice", "bob")).await;
+        state.relay(alice, test_ip(), dm_json("alice", "bob")).await;
 
         // Bob receives exactly the DM; carol receives nothing.
         let got = bob_rx.try_recv().expect("bob should get the DM");
@@ -562,16 +618,16 @@ mod tests {
     async fn dm_to_unknown_recipient_falls_back_to_broadcast() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
-        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+        let (alice, _alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client(test_ip()).await.unwrap();
 
         // Alice authenticates; bob does NOT, so "bob" is unknown to the relay.
-        state.relay(alice, auth_json("alice")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
         while bob_rx.try_recv().is_ok() {}
 
         // DM to the (unregistered) name falls back to broadcast, so bob still
         // receives it — preserving pre-routing delivery behavior.
-        state.relay(alice, dm_json("alice", "bob")).await;
+        state.relay(alice, test_ip(), dm_json("alice", "bob")).await;
         assert!(bob_rx.try_recv().is_ok(), "fallback broadcast should reach bob");
     }
 
@@ -579,19 +635,19 @@ mod tests {
     async fn group_message_is_broadcast_not_unicast() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
-        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
-        let (_carol, mut carol_rx) = state.try_register_client().await.unwrap();
+        let (alice, _alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_carol, mut carol_rx) = state.try_register_client(test_ip()).await.unwrap();
 
-        state.relay(alice, auth_json("alice")).await;
-        state.relay(_bob, auth_json("bob")).await;
-        state.relay(_carol, auth_json("carol")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
+        state.relay(_bob, test_ip(), auth_json("bob")).await;
+        state.relay(_carol, test_ip(), auth_json("carol")).await;
         while bob_rx.try_recv().is_ok() {}
         while carol_rx.try_recv().is_ok() {}
 
         // Group message: recipient is set to the group id, channel is group:*.
         let group = r#"{"type":"MSG","payload":"ct","channel":"group:team","meta":{"sender":"alice","timestamp":0},"encrypted":true,"recipient":"group:team","action":false}"#;
-        state.relay(alice, group.to_string()).await;
+        state.relay(alice, test_ip(), group.to_string()).await;
 
         // Both other members receive it (broadcast), not just one.
         assert!(bob_rx.try_recv().is_ok());
@@ -602,8 +658,8 @@ mod tests {
     async fn username_is_cleared_on_disconnect() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
-        state.relay(alice, auth_json("alice")).await;
+        let (alice, _alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        state.relay(alice, test_ip(), auth_json("alice")).await;
         assert_eq!(state.lookup("alice").await, Some(alice));
 
         state.unregister_client(alice).await;
@@ -615,12 +671,12 @@ mod tests {
     async fn reauth_under_new_name_drops_stale_index_entry() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
-        state.relay(alice, auth_json("alice")).await;
+        let (alice, _alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        state.relay(alice, test_ip(), auth_json("alice")).await;
         assert_eq!(state.lookup("alice").await, Some(alice));
 
         // Same connection re-AUTHs under a different name: the old entry must go.
-        state.relay(alice, auth_json("alice2")).await;
+        state.relay(alice, test_ip(), auth_json("alice2")).await;
         assert_eq!(state.lookup("alice").await, None, "stale name must be dropped");
         assert_eq!(state.lookup("alice2").await, Some(alice));
     }
@@ -629,12 +685,12 @@ mod tests {
     async fn cannot_hijack_a_live_clients_name() {
         let state = RelayState::with_limits(10, 8);
 
-        let (alice, _alice_rx) = state.try_register_client().await.unwrap();
-        let (mallory, _mallory_rx) = state.try_register_client().await.unwrap();
+        let (alice, _alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (mallory, _mallory_rx) = state.try_register_client(test_ip()).await.unwrap();
 
-        state.relay(alice, auth_json("alice")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
         // Mallory tries to claim "alice" while alice is still connected.
-        state.relay(mallory, auth_json("alice")).await;
+        state.relay(mallory, test_ip(), auth_json("alice")).await;
 
         // The name still routes to the original owner, not the impostor.
         assert_eq!(state.lookup("alice").await, Some(alice));
@@ -653,16 +709,16 @@ mod tests {
     #[tokio::test]
     async fn ack_sent_to_sender_on_dm_unicast() {
         let state = RelayState::with_limits(10, 8);
-        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
-        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+        let (alice, mut alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client(test_ip()).await.unwrap();
 
-        state.relay(alice, auth_json("alice")).await;
-        state.relay(_bob, auth_json("bob")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
+        state.relay(_bob, test_ip(), auth_json("bob")).await;
         while alice_rx.try_recv().is_ok() {}
         while bob_rx.try_recv().is_ok() {}
 
         state
-            .relay(alice, dm_json_with_id("alice", "bob", "test-uuid-1"))
+            .relay(alice, test_ip(), dm_json_with_id("alice", "bob", "test-uuid-1"))
             .await;
 
         // Bob receives the DM.
@@ -679,16 +735,16 @@ mod tests {
     #[tokio::test]
     async fn no_ack_when_message_id_absent() {
         let state = RelayState::with_limits(10, 8);
-        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
-        let (_bob, mut bob_rx) = state.try_register_client().await.unwrap();
+        let (alice, mut alice_rx) = state.try_register_client(test_ip()).await.unwrap();
+        let (_bob, mut bob_rx) = state.try_register_client(test_ip()).await.unwrap();
 
-        state.relay(alice, auth_json("alice")).await;
-        state.relay(_bob, auth_json("bob")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
+        state.relay(_bob, test_ip(), auth_json("bob")).await;
         while alice_rx.try_recv().is_ok() {}
         while bob_rx.try_recv().is_ok() {}
 
         // DM without a message_id — relay must not send an ACK.
-        state.relay(alice, dm_json("alice", "bob")).await;
+        state.relay(alice, test_ip(), dm_json("alice", "bob")).await;
         bob_rx.try_recv().expect("bob should receive the DM");
         assert!(alice_rx.try_recv().is_err(), "no ACK when message_id absent");
     }
@@ -696,17 +752,65 @@ mod tests {
     #[tokio::test]
     async fn no_ack_on_broadcast_fallback() {
         let state = RelayState::with_limits(10, 8);
-        let (alice, mut alice_rx) = state.try_register_client().await.unwrap();
+        let (alice, mut alice_rx) = state.try_register_client(test_ip()).await.unwrap();
         // Bystander receives the broadcast but alice should get no ACK.
-        let (_bystander, _bystander_rx) = state.try_register_client().await.unwrap();
+        let (_bystander, _bystander_rx) = state.try_register_client(test_ip()).await.unwrap();
 
-        state.relay(alice, auth_json("alice")).await;
+        state.relay(alice, test_ip(), auth_json("alice")).await;
         while alice_rx.try_recv().is_ok() {}
 
         // DM to an unknown recipient falls back to broadcast — no ACK.
         state
-            .relay(alice, dm_json_with_id("alice", "nobody", "test-uuid-2"))
+            .relay(alice, test_ip(), dm_json_with_id("alice", "nobody", "test-uuid-2"))
             .await;
         assert!(alice_rx.try_recv().is_err(), "no ACK on broadcast fallback");
+    }
+
+    // ── Auth rate-limiting tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_auth_rate_allows_under_threshold() {
+        let state = RelayState::with_limits(10, 8);
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        for _ in 0..60 {
+            assert!(state.check_and_record_auth(ip));
+        }
+    }
+
+    #[test]
+    fn test_auth_rate_blocks_at_threshold() {
+        let state = RelayState::with_limits(10, 8);
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        for _ in 0..60 {
+            state.check_and_record_auth(ip);
+        }
+        assert!(!state.check_and_record_auth(ip), "61st AUTH must be rejected");
+    }
+
+    #[test]
+    fn test_auth_rate_resets_after_window() {
+        let state = RelayState::with_limits(10, 8);
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        let short = Duration::from_millis(50);
+
+        for _ in 0..3 {
+            assert!(state.check_and_record_auth_with(ip, 3, short));
+        }
+        assert!(!state.check_and_record_auth_with(ip, 3, short));
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(state.check_and_record_auth_with(ip, 3, short), "counter must reset after window");
+    }
+
+    #[test]
+    fn test_auth_rate_separate_ips_tracked_independently() {
+        let state = RelayState::with_limits(10, 8);
+        let ip1: IpAddr = test_ip();
+        let ip2: IpAddr = test_ip2();
+        for _ in 0..60 {
+            state.check_and_record_auth(ip1);
+        }
+        // ip1 is now blocked; ip2 must be unaffected
+        assert!(!state.check_and_record_auth(ip1));
+        assert!(state.check_and_record_auth(ip2));
     }
 }

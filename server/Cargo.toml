@@ -32,6 +32,9 @@ shuttle-runtime = "0.57.0"
 futures = "0.3.32"
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["trace", "cors"] }
+# Per-IP rate limiting for /ws connections and AUTH flood mitigation.
+# 0.8.x targets axum 0.8 / tower 0.5 / http 1.0; pin minor to avoid silent API drift.
+tower_governor = "0.8"
 
 # Logging
 tracing = "0.1"
