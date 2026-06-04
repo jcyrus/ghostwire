@@ -2,8 +2,8 @@
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 
-**Current Version**: v0.6.0
-**Last Updated**: 2026-05-31
+**Current Version**: v0.7.0
+**Last Updated**: 2026-06-04
 
 ---
 
@@ -129,24 +129,27 @@
 
 ---
 
-## 🔐 v0.7.0 — Post-Compromise Security
+### v0.7.0 — Post-Compromise Security
 
-**Theme**: Close the remaining cryptographic gap — full DH Double Ratchet
+**Released**: June 2026
 
-The symmetric chain ratchet (v0.4.0) gives unique per-message keys but no *post-compromise security*: a leaked chain key exposes all subsequent messages until the next 24-hour rotation. This release adds the missing Diffie-Hellman ratchet step so sessions self-heal after a key compromise, matching the Signal security model for DMs.
+#### Cryptography
 
-### Cryptography
+- [x] **DH Double Ratchet for DMs** — X25519 DH ratchet bootstrapped from per-epoch init keys; `kdf_rk` (HKDF-SHA256) derives a shared root key; `perform_recv_dh_ratchet` advances the recv chain when the peer rotates their ratchet key. Lex-order initiator pre-advances the send chain so the ratchet starts on the first message. v0.6 clients fall back to symmetric-only ratchet silently via `dh_ratchet_enabled` flag.
+- [x] **Group sender-key ratchet detection** — SENDER_KEY distribution payload grows from 64 → 96 bytes to carry the sender's DH ratchet public key. Receivers that detect a key mismatch (checked before decrypt) remove the stale distribution and surface a `GroupSenderKeyRotated` warning. ⚠️ Requires coordinated group upgrade — v0.6 clients reject 96-byte distributions.
 
-- [ ] **DH Double Ratchet for DMs** — Add an X25519 DH ratchet step to the existing symmetric chain so the root key evolves per message, giving post-compromise security without breaking the existing key exchange flow
-- [ ] **Group forward secrecy** — Ratchet group sender keys per message (`group:*` channels); currently sender keys are static for the session lifetime
+#### Server
 
-### Server
+- [x] **Per-IP rate limiting** — `tower_governor 0.8` limits new WebSocket connections to ~10/min (burst 3); sliding-window AUTH flood cap at 60 per IP per 60 s. `real_ip` extracts `Fly-Client-IP` → `X-Forwarded-For` → TCP peer for Shuttle and local-dev entry points.
 
-- [ ] **Per-IP rate limiting** — `tower_governor` middleware; cap connection attempts and AUTH floods per source IP, handling `X-Forwarded-For` / `Fly-Client-IP` correctly behind Shuttle's proxy _(deferred from v0.6.0)_
+#### Reliability
 
-### Reliability
+- [x] **Relay-level delivery receipts** — Relay ACKs DM delivery to the sender's channel; client renders `✓` (sent) and `✓✓` (delivered) indicators. In-flight only — no server-side message storage.
 
-- [ ] **Relay-level delivery receipts** — Relay acknowledges frame delivery to sender so the client can distinguish "sent" from "delivered to recipient's channel" (no server-side message storage; purely in-flight state)
+#### Protocol
+
+- [x] **Wire format corrected** — `MessageType` now serializes as a plain JSON string (`"MSG"`, `"ACK"`, etc.) instead of the nested internally-tagged object. Fixes DM unicast routing, AUTH registration, and delivery receipt delivery which were all silently broken by the previous nested format.
+- [x] **`MessageType::Unknown`** — catch-all for unrecognised type strings from future protocol versions; prevents parse errors on version skew.
 
 ---
 
@@ -279,6 +282,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ---
 
-**Last Updated**: 2026-05-31
+**Last Updated**: 2026-06-04
 **Maintained By**: @jcyrus
 **License**: MIT
