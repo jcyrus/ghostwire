@@ -153,32 +153,14 @@
 
 ---
 
-## 👥 v0.8.0 — Groups, Collaboration & Operations
+## 🏗 v0.8.0 — Group Channels & Operations
 
-**Theme**: Multi-user collaboration, IRC-style channels, and self-hosting
+**Theme**: Core group channel infrastructure and relay operations — everything else builds on this
 
 ### Group Channels
 
-- [ ] **IRC-style routing** — `/join #channel`, `/leave #channel`, `/invite @user` workflows
-- [ ] **Named group channels** — Multi-user group chats beyond global
-- [ ] **Decentralized channel operators** — `@` status for channel creators with local `/kick` and `/ban` (enforced via client-side ignore lists)
-- [ ] **Group invites** — Shareable invite links
-
-### Messaging
-
-- [ ] **Message editing** — Edit a sent message within a time window
-- [ ] **Message threading** — Reply to a specific message (UUIDs already on `ChatMessage`)
-- [ ] **Search** — Full-text search over local message history
-
-### Enhanced Presence
-
-- [ ] **Custom status** — Set a custom status message
-- [ ] **Do Not Disturb** — Suppress notifications
-- [ ] **Away auto-detection** — Set away status after configurable inactivity period
-
-### Peer-to-Peer
-
-- [ ] **DCC file transfers** — P2P encrypted file transfers that bypass the relay entirely
+- [ ] **IRC-style routing** — `/join #channel`, `/leave #channel`, `/invite @user` workflows; relay tracks per-channel membership and delivers only to members
+- [ ] **Named group channels** — Dynamic multi-user group chats beyond `global`; channel state lives in the relay for the session lifetime
 
 ### Operations & Self-Hosting
 
@@ -186,6 +168,28 @@
 - [ ] **Graceful shutdown** — Drain in-flight messages before relay exits
 - [ ] **Docker support** — Official multi-arch images with a Docker Compose one-command stack
 - [ ] **On-premise guide** — Self-hosted deployment hardening checklist
+
+---
+
+## 💬 v0.8.1 — Messaging & Presence
+
+**Theme**: Collaborative polish on top of the v0.8.0 channel infrastructure
+
+### Channels
+
+- [ ] **Group invites** — Shareable invite links for named channels
+- [ ] **Decentralized channel operators** — `@` status for channel creators; local `/kick` and `/ban` enforced via client-side ignore lists
+
+### Messaging
+
+- [ ] **Message editing** — Edit a sent message within a time window (requires message UUID index)
+- [ ] **Message threading** — Reply to a specific message (`ChatMessage` UUIDs already in place)
+
+### Presence
+
+- [ ] **Custom status** — Set a custom status message
+- [ ] **Do Not Disturb** — Suppress notifications
+- [ ] **Away auto-detection** — Set away status after a configurable inactivity period
 
 ---
 
@@ -243,6 +247,8 @@ _Research-stage ideas aligned with the project's privacy-first identity. No comm
 - **Federated Relay Network** — Interoperable self-hosted relays (Matrix-style)
 - **Zero-Knowledge Identity** — Prove group membership without revealing username
 - **Desktop Notifications** — OS-level alerts for mentions (macOS/Linux, opt-in)
+- **DCC File Transfers** — P2P encrypted file transfers bypassing the relay; blocked on a NAT traversal strategy (STUN/TURN or hole-punching)
+- **Message History Search** — Full-text search over message history; blocked on a persistence decision (in-memory scrollback search is trivial but not useful; disk persistence contradicts the ephemeral model)
 
 ---
 

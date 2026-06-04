@@ -276,9 +276,9 @@ NetworkCommand::Authenticate { username: new_username } => {
 
 Usernames will be rendered in unique, deterministic colors derived from each peer's cryptographic identity. The first 3 bytes of the user's X25519 public key are mapped directly to RGB values and clamped to a minimum luminance threshold so they remain readable on dark terminal backgrounds. Ratatui's `Style::fg(Color::Rgb(r, g, b))` API makes this a zero-dependency addition.
 
-### DCC File Transfers (v0.8.0)
+### DCC File Transfers (Future)
 
-Direct Client-to-Client file transfers will reuse the existing ChaCha20-Poly1305 AEAD implementation. Files will be chunked into fixed-size frames before encryption so each chunk fits within a single WebSocket message and can be independently authenticated. The relay is bypassed entirely — peers negotiate a direct WebSocket connection using a coordination handshake through the relay, then stream encrypted chunks peer-to-peer.
+Direct Client-to-Client file transfers will reuse the existing ChaCha20-Poly1305 AEAD implementation. Files will be chunked into fixed-size frames before encryption so each chunk fits within a single WebSocket message and can be independently authenticated. The relay is bypassed entirely — peers negotiate a direct WebSocket connection using a coordination handshake through the relay, then stream encrypted chunks peer-to-peer. Deferred to Future Exploration pending a NAT traversal strategy (STUN/TURN or hole-punching).
 
 ---
 
