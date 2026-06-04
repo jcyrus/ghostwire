@@ -14,7 +14,7 @@ mod network;
 mod security_audit;
 mod ui;
 
-use app::{App, ChatMessage, InputMode, User};
+use app::{App, ChatMessage, DeliveryStatus, InputMode, User};
 use chrono::Utc;
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -794,6 +794,15 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
                 app::MessageSeverity::Info,
             ));
         }
+        NetworkEvent::GroupSenderKeyRotated { group_id, sender } => {
+            app.add_message(ChatMessage::system_with_severity(
+                format!(
+                    "[{}] {}'s sender key rotated — they need to re-run /groupkey",
+                    group_id, sender
+                ),
+                app::MessageSeverity::Warning,
+            ));
+        }
         NetworkEvent::Reaction {
             sender,
             channel_id,
@@ -806,6 +815,22 @@ fn handle_network_event(app: &mut App, event: NetworkEvent) {
                     format!("Received reaction for unknown message id: {}", message_id),
                     app::MessageSeverity::Warning,
                 ));
+            }
+        }
+        NetworkEvent::MessageDelivered {
+            message_id,
+            recipient,
+        } => {
+            // Compute the canonical DM channel ID (same sort as Channel::dm).
+            let channel_id = if app.username < recipient {
+                format!("dm:{}:{}", app.username, recipient)
+            } else {
+                format!("dm:{}:{}", recipient, app.username)
+            };
+            if let Some(channel) = app.channels.get_mut(&channel_id)
+                && let Some(msg) = channel.messages.iter_mut().find(|m| m.id == message_id)
+            {
+                msg.delivery_status = DeliveryStatus::Delivered;
             }
         }
     }

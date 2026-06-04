@@ -239,6 +239,23 @@ pub fn decode_verifying_key(encoded: &str) -> Result<VerifyingKey> {
     .map_err(|e| anyhow!("Invalid verifying key: {}", e))
 }
 
+/// Root-key KDF for the DH Double Ratchet (v0.7.0).
+///
+/// Takes the current `root_key` as the HKDF salt and `dh_output` (an X25519
+/// shared secret) as the input key material.  Returns `(new_root_key,
+/// new_chain_key)`.  Both expand labels are domain-separated so the two
+/// outputs are independent.
+pub fn kdf_rk(root_key: &[u8; 32], dh_output: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
+    let hkdf = Hkdf::<Sha256>::new(Some(root_key), dh_output);
+    let mut new_root = [0u8; 32];
+    let mut new_chain = [0u8; 32];
+    hkdf.expand(b"GhostWire-DH-Ratchet-v0.7-root", &mut new_root)
+        .expect("HKDF expand root");
+    hkdf.expand(b"GhostWire-DH-Ratchet-v0.7-chain", &mut new_chain)
+        .expect("HKDF expand chain");
+    (new_root, new_chain)
+}
+
 /// Symmetric ratchet step: advance a chain key and derive a message key.
 /// Returns (new_chain_key, message_key).
 pub fn ratchet_chain_key(chain_key: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
@@ -311,5 +328,26 @@ mod tests {
         let decoded = decode_public_key(&encoded).unwrap();
 
         assert_eq!(keypair.public.as_bytes(), decoded.as_bytes());
+    }
+
+    #[test]
+    fn test_kdf_rk_deterministic() {
+        let root = [1u8; 32];
+        let dh = [2u8; 32];
+        let (r1, c1) = kdf_rk(&root, &dh);
+        let (r2, c2) = kdf_rk(&root, &dh);
+        assert_eq!(r1, r2);
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn test_kdf_rk_distinct_inputs_produce_distinct_chains() {
+        let root = [1u8; 32];
+        let dh_a = [2u8; 32];
+        let dh_b = [3u8; 32];
+        let (root_a, chain_a) = kdf_rk(&root, &dh_a);
+        let (root_b, chain_b) = kdf_rk(&root, &dh_b);
+        assert_ne!(root_a, root_b);
+        assert_ne!(chain_a, chain_b);
     }
 }

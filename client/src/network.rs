@@ -2,7 +2,8 @@
 // This module handles WebSocket communication in a separate async task
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
-use crate::crypto::{decode_public_key, decrypt_message, encrypt_message};
+use crate::crypto::{decode_public_key, decrypt_message, encode_public_key, encrypt_message};
+use x25519_dalek::PublicKey;
 use crate::keystore::{KeyChange, KeyStore};
 use crate::security_audit::{SecurityAuditLogger, SecurityEvent};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -96,6 +97,13 @@ pub enum NetworkEvent {
 
     /// Sender key received for group encryption (v0.4.0)
     SenderKeyReceived { group_id: String, sender: String },
+
+    /// Relay confirmed a DM reached the recipient's outbound channel (v0.7.0).
+    MessageDelivered { message_id: String, recipient: String },
+
+    /// A group message arrived with a different sender ratchet key than what was
+    /// distributed, meaning the sender re-ran `/groupkey` (v0.7.0).
+    GroupSenderKeyRotated { group_id: String, sender: String },
 }
 
 /// Messages sent from the UI to the network task
@@ -160,6 +168,7 @@ fn build_key_exchange_message(
     username: &str,
     public_key_b64: &str,
     recipient: Option<String>,
+    ratchet_key_b64: Option<String>,
 ) -> WireMessage {
     WireMessage {
         msg_type: MessageType::KeyExchange,
@@ -177,6 +186,7 @@ fn build_key_exchange_message(
         message_id: None,
         reaction_to: None,
         reaction_emoji: None,
+        ratchet_key: ratchet_key_b64,
     }
 }
 
@@ -305,6 +315,7 @@ pub async fn network_task(
             message_id: None,
             reaction_to: None,
             reaction_emoji: None,
+            ratchet_key: None,
         };
 
         if let Ok(json) = serde_json::to_string(&auth_msg)
@@ -317,11 +328,16 @@ pub async fn network_task(
         }
 
         // Send key exchange message to announce our public key (v0.3.0)
-        let our_public_key = {
+        let (our_public_key, our_ratchet_init_key) = {
             let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
-            store.get_our_public_key()
+            (store.get_our_public_key(), store.get_our_ratchet_init_public_key())
         };
-        let key_exchange_msg = build_key_exchange_message(&username, &our_public_key, None);
+        let key_exchange_msg = build_key_exchange_message(
+            &username,
+            &our_public_key,
+            None,
+            Some(our_ratchet_init_key),
+        );
 
         if let Ok(json) = serde_json::to_string(&key_exchange_msg)
             && let Err(e) = write.send(Message::Text(json.into())).await
@@ -385,10 +401,15 @@ pub async fn network_task(
                                         store.get_our_public_key()
                                     };
 
+                                    let our_rk = {
+                                        let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
+                                        store.get_our_ratchet_init_public_key()
+                                    };
                                     let targeted_key_exchange = build_key_exchange_message(
                                         &username,
                                         &our_public_key,
                                         Some(recipient.clone()),
+                                        Some(our_rk),
                                     );
 
                                     if let Ok(json) = serde_json::to_string(&targeted_key_exchange)
@@ -468,6 +489,9 @@ pub async fn network_task(
                             // so commit_send/commit_group_send don't re-derive via HKDF.
                             let mut pending_dm_commit: Option<(String, [u8; 32])> = None;
                             let mut pending_group_commit: Option<(String, [u8; 32])> = None;
+                            // Ratchet public keys to include in outgoing DM / group messages (v0.7.0).
+                            let mut dm_ratchet_key: Option<String> = None;
+                            let mut group_ratchet_key: Option<String> = None;
 
                             // Determine recipient from channel_id (dm:user1:user2)
                             let recipient = dm_recipient_from_channel(&channel_id, &username);
@@ -480,6 +504,10 @@ pub async fn network_task(
                                     match store.get_session(recip) {
                                         Ok(session) => {
                                             let (msg_key, new_chain) = session.derive_send_key();
+                                            // Only include ratchet_key for v0.7+ peers with DH ratchet active.
+                                            if session.dh_ratchet_enabled {
+                                                dm_ratchet_key = Some(encode_public_key(&session.ratchet_public));
+                                            }
                                             match encrypt_message(&content, &msg_key) {
                                                 Ok(encrypted_payload) => {
                                                     tracing::debug!("Encrypted message to {}", recip);
@@ -523,6 +551,9 @@ pub async fn network_task(
                             } else if channel_id.starts_with("group:") {
                                 let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                                 if let Some((msg_key, new_chain)) = store.derive_group_send_key(&channel_id) {
+                                    // Capture ratchet pub for the group message header (v0.7.0).
+                                    group_ratchet_key = store.get_group_send_ratchet_public(&channel_id)
+                                        .map(|pk| encode_public_key(&pk));
                                     match encrypt_message(&content, &msg_key) {
                                         Ok(encrypted_payload) => {
                                             tracing::debug!("Encrypted group message in {}", channel_id);
@@ -557,6 +588,7 @@ pub async fn network_task(
                                 (content.clone(), false)
                             };
 
+                            let is_dm = recipient.is_some();
                             let msg = WireMessage {
                                 msg_type: MessageType::Message,
                                 payload,
@@ -573,6 +605,12 @@ pub async fn network_task(
                                 message_id: Some(message_id),
                                 reaction_to: None,
                                 reaction_emoji: None,
+                                // Include ratchet pub on encrypted DMs and group messages (v0.7.0).
+                                ratchet_key: match (encrypted, is_dm) {
+                                    (true, true) => dm_ratchet_key,
+                                    (true, false) => group_ratchet_key,
+                                    _ => None,
+                                },
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg) {
@@ -612,6 +650,7 @@ pub async fn network_task(
                                 message_id: None,
                                 reaction_to: None,
                                 reaction_emoji: None,
+                                ratchet_key: None,
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg)
@@ -720,14 +759,18 @@ pub async fn network_task(
                                     ),
                                 });
 
-                                // Re-broadcast new public key
-                                let public_key = {
+                                // Re-broadcast new public key + new ratchet init key
+                                let (public_key, ratchet_init_key) = {
                                     let store = keystore.lock().unwrap_or_else(|e| e.into_inner());
-                                    store.get_our_public_key()
+                                    (store.get_our_public_key(), store.get_our_ratchet_init_public_key())
                                 };
 
-                                let msg =
-                                    build_key_exchange_message(&username, &public_key, None);
+                                let msg = build_key_exchange_message(
+                                    &username,
+                                    &public_key,
+                                    None,
+                                    Some(ratchet_init_key),
+                                );
 
                                 if let Ok(json) = serde_json::to_string(&msg) {
                                     let _ = write.send(Message::Text(json.into())).await;
@@ -740,14 +783,22 @@ pub async fn network_task(
                             }
                         }
                         NetworkCommand::DistributeGroupKey { group_id, members } => {
-                            let (key, chain_key) = {
+                            let (key, chain_key, ratchet_pub_bytes) = {
                                 let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
-                                store.get_or_create_sender_key(&group_id)
+                                let (key, chain_key) = store.get_or_create_sender_key(&group_id);
+                                let rp = store
+                                    .get_group_send_ratchet_public(&group_id)
+                                    .map(|pk| *pk.as_bytes())
+                                    .unwrap_or([0u8; 32]);
+                                (key, chain_key, rp)
                             };
-                            // Encode key + chain_key together as payload
-                            let mut payload_bytes = Vec::with_capacity(64);
+                            // 96-byte payload: key(32) || chain_key(32) || ratchet_public(32).
+                            // v0.6 receivers expect 64 bytes and will reject this distribution;
+                            // that is the intended migration cutover (see v0.7 release notes).
+                            let mut payload_bytes = Vec::with_capacity(96);
                             payload_bytes.extend_from_slice(&key);
                             payload_bytes.extend_from_slice(&chain_key);
+                            payload_bytes.extend_from_slice(&ratchet_pub_bytes);
                             let payload = BASE64.encode(&payload_bytes);
 
                             // Send sender key to each member via the relay
@@ -796,6 +847,7 @@ pub async fn network_task(
                                     message_id: None,
                                     reaction_to: None,
                                     reaction_emoji: None,
+                                    ratchet_key: None,
                                 };
                                 if let Ok(json) = serde_json::to_string(&msg)
                                     && write.send(Message::Text(json.into())).await.is_ok()
@@ -829,6 +881,7 @@ pub async fn network_task(
                                 message_id: None,
                                 reaction_to: Some(message_id),
                                 reaction_emoji: Some(emoji),
+                                ratchet_key: None,
                             };
 
                             if let Ok(json) = serde_json::to_string(&msg)
@@ -895,6 +948,30 @@ fn handle_wire_message(
                 let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
                 if msg.channel.starts_with("group:") {
                     if store.has_sender_key(&msg.channel, &msg.meta.sender) {
+                        // Sender key rotation detection (v0.7.0): check BEFORE deriving
+                        // recv key / decrypting. When the sender re-runs /groupkey, the
+                        // message is encrypted under the new distribution and decryption
+                        // with the stale one fails — so the Ok branch is never reached.
+                        // Detecting the ratchet key mismatch up front lets us surface the
+                        // warning and skip the doomed decrypt attempt.
+                        if let Some(rk_b64) = &msg.ratchet_key
+                            && let Ok(received_rk) = decode_public_key(rk_b64)
+                            && received_rk.as_bytes() != &[0u8; 32]
+                            && let Some(stored_rk) = store.get_group_sender_ratchet_public(
+                                &msg.channel,
+                                &msg.meta.sender,
+                            )
+                            && stored_rk.as_bytes() != &[0u8; 32]
+                            && stored_rk.as_bytes() != received_rk.as_bytes()
+                        {
+                            store.remove_sender_key(&msg.channel, &msg.meta.sender);
+                            let _ = event_tx.send(NetworkEvent::GroupSenderKeyRotated {
+                                group_id: msg.channel.clone(),
+                                sender: msg.meta.sender.clone(),
+                            });
+                            return;
+                        }
+
                         let Some((msg_key, new_chain)) =
                             store.derive_group_recv_key(&msg.channel, &msg.meta.sender)
                         else {
@@ -912,6 +989,7 @@ fn handle_wire_message(
                                     &msg.meta.sender,
                                     new_chain,
                                 );
+
                                 (plaintext, message_id)
                             }
                             Err(e) => {
@@ -971,6 +1049,16 @@ fn handle_wire_message(
                             return;
                         }
                         extracted_nonce = Some(nonce);
+                    }
+
+                    // DH ratchet step (v0.7.0): only for sessions where both peers
+                    // exchanged init ratchet keys. Skipped for v0.6 fallback sessions.
+                    if session.dh_ratchet_enabled
+                        && let Some(rk_b64) = &msg.ratchet_key
+                        && let Ok(their_new_rk) = decode_public_key(rk_b64)
+                        && their_new_rk.as_bytes() != session.their_ratchet_public.as_bytes()
+                    {
+                        session.perform_recv_dh_ratchet(their_new_rk);
                     }
 
                     // Single HKDF pass: derive msg_key and carry new_chain (C-1).
@@ -1107,6 +1195,16 @@ fn handle_wire_message(
             // Record their public key for the handshake.
             store.store_peer_public_key_decoded(&their_username, their_pk);
 
+            // If the KEY_EXCHANGE carries a DH ratchet init key (v0.7.0), store it
+            // so `establish_session` can perform the DH bootstrap.
+            if let Some(rk_b64) = &msg.ratchet_key {
+                if let Ok(rk) = decode_public_key(rk_b64) {
+                    store.store_peer_ratchet_key_decoded(&their_username, rk);
+                } else {
+                    tracing::warn!("Failed to decode ratchet_key from {}", their_username);
+                }
+            }
+
             // Establish encrypted session.
             //
             // Note: even when a *verified* peer's key changed, we re-establish
@@ -1187,6 +1285,17 @@ fn handle_wire_message(
                 public_key_b64: their_public_key,
             });
         }
+        MessageType::Ack => {
+            if let Some(mid) = msg.message_id {
+                let recipient = msg.recipient.unwrap_or_default();
+                let _ = event_tx.send(NetworkEvent::MessageDelivered {
+                    message_id: mid,
+                    recipient,
+                });
+            }
+        }
+        // Unrecognised type from a future protocol version — silently discard.
+        MessageType::Unknown => {}
         MessageType::SenderKey => {
             if msg.recipient.as_deref() != Some(local_username) {
                 return;
@@ -1231,28 +1340,51 @@ fn handle_wire_message(
                 return;
             };
 
-            if let Ok(payload_bytes) = BASE64.decode(payload_b64)
-                && payload_bytes.len() == 64
-            {
-                let mut key = [0u8; 32];
-                let mut chain_key = [0u8; 32];
-                key.copy_from_slice(&payload_bytes[..32]);
-                chain_key.copy_from_slice(&payload_bytes[32..]);
+            // Parse 96-byte (v0.7: key||chain||ratchet_pub) or 64-byte (v0.6: key||chain)
+            // payload. Anything else is silently discarded.
+            if let Ok(payload_bytes) = BASE64.decode(payload_b64) {
+                let parsed = match payload_bytes.len() {
+                    96 => {
+                        let mut key = [0u8; 32];
+                        let mut chain_key = [0u8; 32];
+                        let mut rp = [0u8; 32];
+                        key.copy_from_slice(&payload_bytes[..32]);
+                        chain_key.copy_from_slice(&payload_bytes[32..64]);
+                        rp.copy_from_slice(&payload_bytes[64..96]);
+                        Some((key, chain_key, PublicKey::from(rp)))
+                    }
+                    64 => {
+                        let mut key = [0u8; 32];
+                        let mut chain_key = [0u8; 32];
+                        key.copy_from_slice(&payload_bytes[..32]);
+                        chain_key.copy_from_slice(&payload_bytes[32..64]);
+                        Some((key, chain_key, PublicKey::from([0u8; 32])))
+                    }
+                    n => {
+                        tracing::warn!(
+                            "Invalid sender key payload length {} from {} — expected 64 or 96",
+                            n, msg.meta.sender
+                        );
+                        None
+                    }
+                };
 
-                let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
-                store.store_sender_key(&msg.channel, &msg.meta.sender, key, chain_key);
-                drop(store);
+                if let Some((key, chain_key, ratchet_public)) = parsed {
+                    let mut store = keystore.lock().unwrap_or_else(|e| e.into_inner());
+                    store.store_sender_key(&msg.channel, &msg.meta.sender, key, chain_key, ratchet_public);
+                    drop(store);
 
-                tracing::info!(
-                    "Received sender key from {} for group {}",
-                    msg.meta.sender,
-                    msg.channel
-                );
+                    tracing::info!(
+                        "Received sender key from {} for group {}",
+                        msg.meta.sender,
+                        msg.channel
+                    );
 
-                let _ = event_tx.send(NetworkEvent::SenderKeyReceived {
-                    group_id: msg.channel,
-                    sender: msg.meta.sender,
-                });
+                    let _ = event_tx.send(NetworkEvent::SenderKeyReceived {
+                        group_id: msg.channel,
+                        sender: msg.meta.sender,
+                    });
+                }
             }
         }
     }
@@ -1307,6 +1439,7 @@ mod tests {
             message_id: None,
             reaction_to: None,
             reaction_emoji: None,
+            ratchet_key: None,
         }
     }
 
@@ -1356,6 +1489,35 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn test_ratchet_key_wire_field_roundtrip() {
+        let mut msg = mock_wire_message(MessageType::Message, "alice");
+        msg.ratchet_key = Some("abc123".to_string());
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: WireMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.ratchet_key, Some("abc123".to_string()));
+
+        // When None, field must be absent from JSON output.
+        let mut msg2 = mock_wire_message(MessageType::Message, "alice");
+        msg2.ratchet_key = None;
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert!(!json2.contains("ratchet_key"), "field must be skipped when None");
+    }
+
+    #[test]
+    fn test_unknown_message_type_is_ignored() {
+        // MessageType::Unknown is the #[serde(other)] catch-all that silently
+        // absorbs unrecognised type values at the match arm.  Verify the variant
+        // is reachable and that a WireMessage carrying it round-trips correctly.
+        let msg = mock_wire_message(MessageType::Unknown, "relay");
+        assert!(matches!(msg.msg_type, MessageType::Unknown));
+        // Serialise and re-parse (Unknown serialises to a sentinel JSON value
+        // that serde maps back to Unknown via the catch-all arm).
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: WireMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded.msg_type, MessageType::Unknown));
     }
 
     #[test]

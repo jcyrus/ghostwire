@@ -4,15 +4,15 @@
 use crate::crypto::{
     EphemeralKeypair, IdentityKeypair, compute_safety_number, decode_verifying_key,
     derive_session_keys, encode_public_key, encode_verifying_key, fingerprint_public_key,
-    generate_ephemeral_keypair, generate_identity_keypair, ratchet_chain_key, sign_message,
-    verify_signature,
+    generate_ephemeral_keypair, generate_identity_keypair, kdf_rk, ratchet_chain_key,
+    sign_message, verify_signature,
 };
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Duration, Utc};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet, VecDeque};
-use x25519_dalek::PublicKey;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Key rotation interval (24 hours)
 const KEY_ROTATION_INTERVAL: i64 = 24 * 60 * 60;
@@ -60,9 +60,9 @@ pub struct PeerSession {
     pub created_at: DateTime<Utc>,
     pub last_message_at: DateTime<Utc>,
     pub verified: bool,
-    /// Current send chain key (ratcheted per message)
+    /// Current send chain key (symmetric ratchet, per-message FS)
     pub send_chain: [u8; 32],
-    /// Current receive chain key (ratcheted per message)
+    /// Current receive chain key (symmetric ratchet, per-message FS)
     pub recv_chain: [u8; 32],
     /// Number of messages sent in current chain
     pub send_counter: u64,
@@ -72,6 +72,22 @@ pub struct PeerSession {
     seen_nonces: HashSet<[u8; 12]>,
     /// FIFO queue to evict oldest nonces when capacity is reached
     nonce_order: VecDeque<[u8; 12]>,
+
+    // ── DH Double Ratchet state (v0.7.0) ──────────────────────────────────
+    /// Root key for the DH ratchet; advanced by `kdf_rk` on each DH step.
+    pub root_key: [u8; 32],
+    /// Our current DH ratchet secret. Used to compute the DH output when the
+    /// peer's ratchet key changes, then replaced with a fresh keypair.
+    pub ratchet_secret: StaticSecret,
+    /// Public half of `ratchet_secret`; included as `ratchet_key` on every
+    /// outgoing encrypted DM so the peer can detect a ratchet rotation.
+    pub ratchet_public: PublicKey,
+    /// Last known DH ratchet public key from the peer. When an incoming DM
+    /// carries a different value, `perform_recv_dh_ratchet` is triggered.
+    pub their_ratchet_public: PublicKey,
+    /// `true` for v0.7+ peers that exchanged init ratchet keys; `false` for
+    /// v0.6 fallback sessions. Prevents DH ratchet operations on legacy peers.
+    pub dh_ratchet_enabled: bool,
 }
 
 impl PeerSession {
@@ -126,6 +142,33 @@ impl PeerSession {
         self.seen_nonces.insert(*nonce);
         self.nonce_order.push_back(*nonce);
     }
+
+    /// Execute a DH ratchet step on receiving a DM whose `ratchet_key` differs
+    /// from `their_ratchet_public`.
+    ///
+    /// Step 1 — derive new recv chain (ECDH with peer's new ratchet key).
+    /// Step 2 — generate fresh local keypair; derive new send chain so future
+    ///          outgoing messages carry post-compromise-secured state.
+    /// Both chains and counters are committed atomically at the end.
+    pub fn perform_recv_dh_ratchet(&mut self, their_new_ratchet: PublicKey) {
+        // Step 1: advance recv chain using our current ratchet secret + peer's new key.
+        let dh = self.ratchet_secret.diffie_hellman(&their_new_ratchet);
+        let (root1, recv_chain) = kdf_rk(&self.root_key, dh.as_bytes());
+
+        // Step 2: generate a fresh ratchet keypair; advance send chain with it.
+        let new_kp = generate_ephemeral_keypair();
+        let dh2 = new_kp.secret.diffie_hellman(&their_new_ratchet);
+        let (root2, send_chain) = kdf_rk(&root1, dh2.as_bytes());
+
+        self.root_key = root2;
+        self.recv_chain = recv_chain;
+        self.recv_counter = 0;
+        self.send_chain = send_chain;
+        self.send_counter = 0;
+        self.their_ratchet_public = their_new_ratchet;
+        self.ratchet_secret = new_kp.secret;
+        self.ratchet_public = new_kp.public;
+    }
 }
 
 /// Sender key state for group encryption (v0.4.0).
@@ -138,6 +181,15 @@ pub struct SenderKeyState {
     pub chain_key: [u8; 32],
     /// Message counter (monotonic)
     pub counter: u64,
+    /// DH ratchet public key (v0.7.0). Included in every outgoing group message
+    /// and in the SENDER_KEY distribution payload. Recipients compare it against
+    /// the stored value to detect when the sender has run `/groupkey`.
+    pub ratchet_public: PublicKey,
+    /// DH ratchet secret (v0.7.0). Present only on our own sender key (`generate`);
+    /// set to a zero sentinel on received distributions (`from_distribution`).
+    /// Stored for future group DH ratchet steps; not yet used in this version.
+    #[allow(dead_code)]
+    pub ratchet_secret: StaticSecret,
 }
 
 impl SenderKeyState {
@@ -147,19 +199,26 @@ impl SenderKeyState {
         let mut chain_key = [0u8; 32];
         rand::fill(&mut key);
         rand::fill(&mut chain_key);
+        let ratchet_kp = generate_ephemeral_keypair();
         Self {
             key,
             chain_key,
             counter: 0,
+            ratchet_public: ratchet_kp.public,
+            ratchet_secret: ratchet_kp.secret,
         }
     }
 
     /// Create from a received distribution message.
-    pub fn from_distribution(key: [u8; 32], chain_key: [u8; 32]) -> Self {
+    /// `ratchet_public` is the sender's current DH ratchet public key (v0.7.0).
+    /// Pass `PublicKey::from([0u8; 32])` when decoding a v0.6 64-byte payload.
+    pub fn from_distribution(key: [u8; 32], chain_key: [u8; 32], ratchet_public: PublicKey) -> Self {
         Self {
             key,
             chain_key,
             counter: 0,
+            ratchet_public,
+            ratchet_secret: StaticSecret::from([0u8; 32]),
         }
     }
 
@@ -191,11 +250,20 @@ pub struct KeyStore {
     /// When our ephemeral key was created
     ephemeral_created_at: DateTime<Utc>,
 
+    /// Our DH ratchet init keypair (v0.7.0). Advertised in KEY_EXCHANGE and
+    /// used to bootstrap DH Double Ratchet state in `establish_session`.
+    /// Regenerated alongside `ephemeral` on every 24h key rotation.
+    pub ratchet_init_keypair: EphemeralKeypair,
+
     /// Active sessions with peers (username -> session)
     sessions: HashMap<String, PeerSession>,
 
     /// Pending key exchanges (username -> their public key)
     pending_exchanges: HashMap<String, PublicKey>,
+
+    /// Pending peer DH ratchet init keys (username -> their init ratchet pub).
+    /// Populated from KEY_EXCHANGE messages; consumed by `establish_session`.
+    pending_ratchet_keys: HashMap<String, PublicKey>,
 
     /// Our sender keys for groups we belong to (group_id -> SenderKeyState)
     our_sender_keys: HashMap<String, SenderKeyState>,
@@ -242,8 +310,10 @@ impl KeyStore {
             identity,
             ephemeral: generate_ephemeral_keypair(),
             ephemeral_created_at: Utc::now(),
+            ratchet_init_keypair: generate_ephemeral_keypair(),
             sessions: HashMap::new(),
             pending_exchanges: HashMap::new(),
+            pending_ratchet_keys: HashMap::new(),
             our_sender_keys: HashMap::new(),
             group_sender_keys: HashMap::new(),
             known_peer_keys: HashMap::new(),
@@ -262,6 +332,22 @@ impl KeyStore {
         encode_public_key(&self.ephemeral.public)
     }
 
+    /// Base64-encoded DH ratchet init public key for inclusion in KEY_EXCHANGE.
+    pub fn get_our_ratchet_init_public_key(&self) -> String {
+        encode_public_key(&self.ratchet_init_keypair.public)
+    }
+
+    /// Store the peer's decoded DH ratchet init public key for the upcoming
+    /// `establish_session` call.
+    pub fn store_peer_ratchet_key_decoded(&mut self, username: &str, key: PublicKey) {
+        self.pending_ratchet_keys.insert(username.to_string(), key);
+    }
+
+    /// Take (remove and return) the pending DH ratchet init key for a peer.
+    fn take_peer_ratchet_key(&mut self, username: &str) -> Option<PublicKey> {
+        self.pending_ratchet_keys.remove(username)
+    }
+
     /// Check if our ephemeral key needs rotation
     pub fn needs_rotation(&self) -> bool {
         let age = Utc::now() - self.ephemeral_created_at;
@@ -273,6 +359,7 @@ impl KeyStore {
         tracing::info!("Rotating ephemeral keypair for forward secrecy");
         self.ephemeral = generate_ephemeral_keypair();
         self.ephemeral_created_at = Utc::now();
+        self.ratchet_init_keypair = generate_ephemeral_keypair();
 
         // Clear all sessions - they need to re-establish with new key
         self.clear_all_sessions();
@@ -302,21 +389,20 @@ impl KeyStore {
             .insert(username.to_string(), public_key);
     }
 
-    /// Establish a session with a peer (perform ECDH)
+    /// Establish a session with a peer (perform ECDH + optional DH ratchet bootstrap).
     pub fn establish_session(&mut self, username: &str) -> Result<()> {
-        // Get their public key from pending exchanges
-        let their_public = self
+        // Copy their public key out to avoid holding a borrow into pending_exchanges
+        // while also mutably accessing other fields below.
+        let their_public = *self
             .pending_exchanges
             .get(username)
             .ok_or_else(|| anyhow!("No public key for peer: {}", username))?;
 
-        // Derive session keys
+        // Base ECDH session keys (v0.6 path).
         let session_keys =
-            derive_session_keys(&self.ephemeral.secret, their_public, b"GhostWire v0.4.0")?;
+            derive_session_keys(&self.ephemeral.secret, &their_public, b"GhostWire v0.4.0")?;
 
-        // Derive send/recv chains with role differentiation.
-        // The peer with the lexicographically smaller public key uses
-        // (chain_key, "send"/"recv") ordering; the other uses the reverse.
+        // Role-differentiated send/recv chains (lex ordering of ephemeral public keys).
         let our_pub = self.ephemeral.public.as_bytes();
         let their_pub = their_public.as_bytes();
         let (send_label, recv_label) = if our_pub < their_pub {
@@ -333,15 +419,62 @@ impl KeyStore {
         hkdf.expand(recv_label, &mut recv_chain)
             .expect("HKDF expand for recv chain");
 
+        // DH Double Ratchet bootstrap (v0.7): if the peer advertised an init
+        // ratchet key (carried in KEY_EXCHANGE.ratchet_key), perform one DH step
+        // to derive a shared root key and tighten the initial chain keys.
+        //
+        // If the peer's init ratchet key is absent (v0.6 client), skip the DH
+        // step entirely and fall back to symmetric-only ratchet.
+        let (root_key, ratchet_secret, ratchet_public, their_ratchet_public, dh_ratchet_enabled) =
+            if let Some(their_init_ratchet) = self.take_peer_ratchet_key(username) {
+                let dh_init = self
+                    .ratchet_init_keypair
+                    .secret
+                    .diffie_hellman(&their_init_ratchet);
+                let (root_key, init_chain) =
+                    kdf_rk(&session_keys.chain_key, dh_init.as_bytes());
+
+                // Re-derive role-differentiated chains from init_chain so the DH
+                // output folds into the initial send/recv keys.
+                let our_rp = self.ratchet_init_keypair.public.as_bytes();
+                let their_rp = their_init_ratchet.as_bytes();
+                let (s_lbl, r_lbl): (&[u8], &[u8]) = if our_rp < their_rp {
+                    (b"send", b"recv")
+                } else {
+                    (b"recv", b"send")
+                };
+                let rp_hkdf = Hkdf::<Sha256>::new(None, &init_chain);
+                rp_hkdf.expand(s_lbl, &mut send_chain).expect("HKDF");
+                rp_hkdf.expand(r_lbl, &mut recv_chain).expect("HKDF");
+
+                // Initiator (lex-lower ratchet pub) pre-advances the send chain immediately
+                // so the first outbound DM carries a key the peer has never seen.
+                // ECDH commutativity: DH(new_secret, their_init) == DH(their_init_secret, new_pub),
+                // so the responder's perform_recv_dh_ratchet derives the matching recv chain.
+                let init_secret = self.ratchet_init_keypair.secret.clone();
+                let init_public = self.ratchet_init_keypair.public;
+                let (root_key, ratchet_secret, ratchet_public) = if our_rp < their_rp {
+                    let new_kp = generate_ephemeral_keypair();
+                    let dh = new_kp.secret.diffie_hellman(&their_init_ratchet);
+                    let (new_root, new_send) = kdf_rk(&root_key, dh.as_bytes());
+                    send_chain.copy_from_slice(&new_send);
+                    (new_root, new_kp.secret, new_kp.public)
+                } else {
+                    (root_key, init_secret, init_public)
+                };
+                (root_key, ratchet_secret, ratchet_public, their_init_ratchet, true)
+            } else {
+                // v0.6 fallback: no DH ratchet. dh_ratchet_enabled=false prevents the
+                // placeholder ratchet_public from being sent or triggering ratchet steps.
+                let fallback = generate_ephemeral_keypair();
+                (session_keys.chain_key, fallback.secret, fallback.public, their_public, false)
+            };
+
         let now = Utc::now();
         let session = PeerSession {
-            their_public_key: *their_public,
+            their_public_key: their_public,
             created_at: now,
             last_message_at: now,
-            // A freshly (re-)established session starts unverified; the badge is
-            // re-earned via `/verify`. Persistent verification (`verified_peers`)
-            // is kept only to drive the key-change warning, not the live badge,
-            // because the safety number depends on the (rotating) ephemeral key.
             verified: false,
             send_chain,
             recv_chain,
@@ -349,6 +482,11 @@ impl KeyStore {
             recv_counter: 0,
             seen_nonces: HashSet::new(),
             nonce_order: VecDeque::new(),
+            root_key,
+            ratchet_secret,
+            ratchet_public,
+            their_ratchet_public,
+            dh_ratchet_enabled,
         };
 
         self.sessions.insert(username.to_string(), session);
@@ -477,6 +615,7 @@ impl KeyStore {
         tracing::warn!("Clearing all encryption sessions");
         self.sessions.clear();
         self.pending_exchanges.clear();
+        self.pending_ratchet_keys.clear();
     }
 
     /// Get or create our sender key for a group. Returns (key, chain_key) for distribution.
@@ -510,12 +649,15 @@ impl KeyStore {
     }
 
     /// Store a sender key received from another group member.
+    /// `ratchet_public` is the sender's current DH ratchet pub (v0.7.0); pass
+    /// `PublicKey::from([0u8;32])` for v0.6 64-byte distributions.
     pub fn store_sender_key(
         &mut self,
         group_id: &str,
         sender: &str,
         key: [u8; 32],
         chain_key: [u8; 32],
+        ratchet_public: PublicKey,
     ) {
         let group = self
             .group_sender_keys
@@ -523,8 +665,11 @@ impl KeyStore {
             .or_default();
 
         if let Some(existing) = group.get(sender) {
-            // Ignore stale/duplicate distributions to avoid resetting an active receive chain.
-            if existing.key == key && existing.chain_key == chain_key {
+            // Ignore stale/duplicate distributions (same key, chain, and ratchet pub).
+            if existing.key == key
+                && existing.chain_key == chain_key
+                && existing.ratchet_public.as_bytes() == ratchet_public.as_bytes()
+            {
                 return;
             }
             if existing.counter > 0 {
@@ -539,8 +684,28 @@ impl KeyStore {
 
         group.insert(
             sender.to_string(),
-            SenderKeyState::from_distribution(key, chain_key),
+            SenderKeyState::from_distribution(key, chain_key, ratchet_public),
         );
+    }
+
+    /// Return the DH ratchet public key for our own sender key in `group_id`.
+    pub fn get_group_send_ratchet_public(&self, group_id: &str) -> Option<PublicKey> {
+        self.our_sender_keys.get(group_id).map(|s| s.ratchet_public)
+    }
+
+    /// Return the stored ratchet public key for a peer's sender key in `group_id`.
+    pub fn get_group_sender_ratchet_public(&self, group_id: &str, sender: &str) -> Option<PublicKey> {
+        self.group_sender_keys
+            .get(group_id)
+            .and_then(|g| g.get(sender))
+            .map(|s| s.ratchet_public)
+    }
+
+    /// Remove a peer's sender key for `group_id` (called on rotation detection).
+    pub fn remove_sender_key(&mut self, group_id: &str, sender: &str) {
+        if let Some(group) = self.group_sender_keys.get_mut(group_id) {
+            group.remove(sender);
+        }
     }
 
     /// Derive the next group-receive key without mutating state.
@@ -621,7 +786,7 @@ mod tests {
         let _ = store.get_or_create_sender_key(group_id);
         assert!(store.derive_group_send_key(group_id).is_some());
 
-        store.store_sender_key(group_id, sender, [1u8; 32], [2u8; 32]);
+        store.store_sender_key(group_id, sender, [1u8; 32], [2u8; 32], PublicKey::from([0u8; 32]));
         assert!(store.has_sender_key(group_id, sender));
 
         store.rotate_ephemeral_key();
@@ -847,6 +1012,221 @@ mod tests {
             !store.known_peer_keys.contains_key("peer0"),
             "oldest peer should have been evicted"
         );
+    }
+
+    // ── Group sender-key ratchet tests (v0.7.0) ─────────────────────────────
+
+    #[test]
+    fn test_sender_key_state_generate_has_ratchet_public() {
+        let state = SenderKeyState::generate();
+        assert_ne!(state.ratchet_public.as_bytes(), &[0u8; 32], "ratchet_public must be non-zero");
+    }
+
+    #[test]
+    fn test_store_sender_key_96_byte_payload() {
+        let mut store = KeyStore::new();
+        let rp = generate_ephemeral_keypair().public;
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp);
+        let stored = store.get_group_sender_ratchet_public("group:ops", "alice").unwrap();
+        assert_eq!(stored.as_bytes(), rp.as_bytes());
+    }
+
+    #[test]
+    fn test_store_sender_key_64_byte_fallback() {
+        let mut store = KeyStore::new();
+        // 64-byte v0.6 distribution: sentinel zero ratchet pub
+        store.store_sender_key("group:ops", "bob", [3u8; 32], [4u8; 32], PublicKey::from([0u8; 32]));
+        let stored = store.get_group_sender_ratchet_public("group:ops", "bob").unwrap();
+        assert_eq!(stored.as_bytes(), &[0u8; 32], "sentinel must be zero");
+    }
+
+    #[test]
+    fn test_group_sender_key_rotation_detected() {
+        let mut store = KeyStore::new();
+        let rp_a = generate_ephemeral_keypair().public;
+        let rp_b = generate_ephemeral_keypair().public;
+        assert_ne!(rp_a.as_bytes(), rp_b.as_bytes());
+
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp_a);
+        // Simulate /groupkey: new distribution with rp_b → rotation detected externally
+        // (the rotation is detected in network.rs; here we just verify remove_sender_key works)
+        store.remove_sender_key("group:ops", "alice");
+        assert!(!store.has_sender_key("group:ops", "alice"));
+    }
+
+    #[test]
+    fn test_group_sender_key_unchanged_no_rotation() {
+        let mut store = KeyStore::new();
+        let rp = generate_ephemeral_keypair().public;
+        store.store_sender_key("group:ops", "alice", [1u8; 32], [2u8; 32], rp);
+        let stored = store.get_group_sender_ratchet_public("group:ops", "alice").unwrap();
+        // Same ratchet pub → no rotation
+        assert_eq!(stored.as_bytes(), rp.as_bytes());
+    }
+
+    // ── DH Double Ratchet tests (v0.7.0) ────────────────────────────────────
+
+    /// Exchange init ratchet keys between two keystores and verify that after
+    /// `establish_session` the chains are properly mirrored.
+    fn setup_ratchet_sessions(alice: &mut KeyStore, bob: &mut KeyStore) {
+        let alice_pub = alice.get_our_public_key();
+        let alice_rk = alice.get_our_ratchet_init_public_key();
+        let bob_pub = bob.get_our_public_key();
+        let bob_rk = bob.get_our_ratchet_init_public_key();
+
+        alice.store_peer_public_key("bob", &bob_pub).unwrap();
+        alice.store_peer_ratchet_key_decoded(
+            "bob",
+            crate::crypto::decode_public_key(&bob_rk).unwrap(),
+        );
+
+        bob.store_peer_public_key("alice", &alice_pub).unwrap();
+        bob.store_peer_ratchet_key_decoded(
+            "alice",
+            crate::crypto::decode_public_key(&alice_rk).unwrap(),
+        );
+
+        alice.establish_session("bob").unwrap();
+        bob.establish_session("alice").unwrap();
+    }
+
+    #[test]
+    fn test_double_ratchet_session_establishment() {
+        let mut alice = KeyStore::new();
+        let mut bob = KeyStore::new();
+        setup_ratchet_sessions(&mut alice, &mut bob);
+
+        // Determine initiator by lex-order of ratchet init pubs (same rule as establish_session).
+        let alice_rk = crate::crypto::decode_public_key(&alice.get_our_ratchet_init_public_key()).unwrap();
+        let bob_rk = crate::crypto::decode_public_key(&bob.get_our_ratchet_init_public_key()).unwrap();
+        let alice_is_initiator = alice_rk.as_bytes() < bob_rk.as_bytes();
+
+        let a = alice.get_session("bob").unwrap();
+        let b = bob.get_session("alice").unwrap();
+
+        assert!(a.dh_ratchet_enabled && b.dh_ratchet_enabled, "both sessions should have DH ratchet enabled");
+        assert_ne!(a.send_chain, b.send_chain, "roles must be distinct");
+        if alice_is_initiator {
+            // Alice pre-advanced her send chain via DH; it won't match Bob's recv until
+            // Bob processes Alice's first message and runs perform_recv_dh_ratchet.
+            assert_ne!(a.send_chain, b.recv_chain, "initiator pre-advanced; not yet synced");
+            assert_eq!(a.recv_chain, b.send_chain, "alice recv == bob send");
+        } else {
+            assert_eq!(a.send_chain, b.recv_chain, "alice send == bob recv");
+            // Bob pre-advanced his send chain; it won't match Alice's recv until
+            // Alice processes Bob's first message.
+            assert_ne!(a.recv_chain, b.send_chain, "initiator (bob) pre-advanced; not yet synced");
+        }
+    }
+
+    #[test]
+    fn test_perform_recv_dh_ratchet_resets_counters() {
+        let mut alice = KeyStore::new();
+        let mut bob = KeyStore::new();
+        setup_ratchet_sessions(&mut alice, &mut bob);
+
+        // Simulate bob advancing his send counter.
+        {
+            let s = bob.get_session("alice").unwrap();
+            let (_, nc) = s.derive_send_key();
+            s.commit_send(nc);
+            assert_eq!(s.send_counter, 1);
+        }
+
+        // Bob receives a new ratchet key from alice → counters should reset.
+        let new_alice_kp = generate_ephemeral_keypair();
+        {
+            let s = bob.get_session("alice").unwrap();
+            s.perform_recv_dh_ratchet(new_alice_kp.public);
+            assert_eq!(s.recv_counter, 0, "recv counter reset");
+            assert_eq!(s.send_counter, 0, "send counter reset");
+            assert_eq!(
+                s.their_ratchet_public.as_bytes(),
+                new_alice_kp.public.as_bytes(),
+                "their_ratchet_public updated"
+            );
+        }
+    }
+
+    #[test]
+    fn test_double_ratchet_encrypt_decrypt_roundtrip() {
+        use crate::crypto::{decrypt_message, encrypt_message};
+
+        let mut alice = KeyStore::new();
+        let mut bob = KeyStore::new();
+        setup_ratchet_sessions(&mut alice, &mut bob);
+
+        let plaintext = "hello ratchet";
+
+        // --- Message 1: Alice sends. If Alice is the initiator (lex-lower ratchet pub),
+        // her ratchet_public is already pre-advanced; Bob detects it and DH-ratchets.
+        // If Bob is the initiator, Alice's pub matches what Bob has stored → no DH step. ---
+        let (ciphertext1, alice_ratchet_pub1) = {
+            let s = alice.get_session("bob").unwrap();
+            let rk_pub = s.ratchet_public;
+            let (msg_key, nc) = s.derive_send_key();
+            let ct = encrypt_message(plaintext, &msg_key).unwrap();
+            s.commit_send(nc);
+            (ct, rk_pub)
+        };
+
+        {
+            let s = bob.get_session("alice").unwrap();
+            if alice_ratchet_pub1.as_bytes() != s.their_ratchet_public.as_bytes() {
+                // Alice is the initiator — pre-advanced ratchet key triggers a DH step.
+                s.perform_recv_dh_ratchet(alice_ratchet_pub1);
+            }
+            let (msg_key, nc) = s.derive_recv_key();
+            let got = decrypt_message(&ciphertext1, &msg_key).unwrap();
+            s.commit_recv(nc);
+            assert_eq!(got, plaintext);
+        }
+
+        // --- Message 2: Alice sends again with the same ratchet key; symmetric ratchet only. ---
+        let (ciphertext2, alice_ratchet_pub2) = {
+            let s = alice.get_session("bob").unwrap();
+            let rk_pub = s.ratchet_public;
+            let (msg_key, nc) = s.derive_send_key();
+            let ct = encrypt_message(plaintext, &msg_key).unwrap();
+            s.commit_send(nc);
+            (ct, rk_pub)
+        };
+
+        {
+            let s = bob.get_session("alice").unwrap();
+            // Same ratchet pub as msg 1 → no additional DH step.
+            assert_eq!(alice_ratchet_pub2.as_bytes(), s.their_ratchet_public.as_bytes());
+            let (msg_key, nc) = s.derive_recv_key();
+            let got = decrypt_message(&ciphertext2, &msg_key).unwrap();
+            s.commit_recv(nc);
+            assert_eq!(got, plaintext);
+        }
+    }
+
+    #[test]
+    fn test_no_ratchet_key_falls_back_to_symmetric() {
+        // establish_session without a pending ratchet key: v0.6 path.
+        let mut alice = KeyStore::new();
+        let mut bob = KeyStore::new();
+
+        let alice_pub = alice.get_our_public_key();
+        let bob_pub = bob.get_our_public_key();
+
+        alice.store_peer_public_key("bob", &bob_pub).unwrap();
+        bob.store_peer_public_key("alice", &alice_pub).unwrap();
+        // No store_peer_ratchet_key_decoded → v0.6 fallback path.
+        alice.establish_session("bob").unwrap();
+        bob.establish_session("alice").unwrap();
+
+        // v0.6 symmetric chain must still work for encrypt/decrypt.
+        use crate::crypto::{decrypt_message, encrypt_message};
+        let (msg_key, nc) = alice.get_session("bob").unwrap().derive_send_key();
+        alice.get_session("bob").unwrap().commit_send(nc);
+        let ct = encrypt_message("hi", &msg_key).unwrap();
+
+        let (msg_key_bob, nc_bob) = bob.get_session("alice").unwrap().derive_recv_key();
+        bob.get_session("alice").unwrap().commit_recv(nc_bob);
+        assert_eq!(decrypt_message(&ct, &msg_key_bob).unwrap(), "hi");
     }
 
     #[test]

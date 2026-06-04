@@ -1,7 +1,7 @@
 // GhostWire Client - UI Components
 // This module handles all Ratatui rendering logic
 
-use crate::app::{App, InputMode};
+use crate::app::{App, DeliveryStatus, InputMode};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -388,8 +388,19 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
                         let content_width = available_width.saturating_sub(prefix_len);
 
                         // Render markdown/code blocks and then wrap into display lines.
-                        let rendered_lines =
+                        let mut rendered_lines =
                             render_message_content_lines(&msg.content, content_width);
+
+                        // Append the delivery indicator to the last content line
+                        // for the sender's own messages.
+                        if msg.sender == app.username {
+                            let indicator = delivery_indicator_span(&msg.delivery_status);
+                            if let Some(last) = rendered_lines.last_mut() {
+                                last.push(indicator);
+                            } else {
+                                rendered_lines.push(vec![indicator]);
+                            }
+                        }
 
                         let mut items = rendered_lines
                             .into_iter()
@@ -709,6 +720,19 @@ fn find_closing_double_star(chars: &[char], start: usize) -> Option<usize> {
         idx += 1;
     }
     None
+}
+
+/// Delivery status indicator appended to the last line of the sender's own messages.
+/// `✓` (dark gray) = sent to relay; `✓✓` (cyan) = relay confirmed delivery.
+fn delivery_indicator_span(status: &DeliveryStatus) -> Span<'static> {
+    match status {
+        DeliveryStatus::Sent => {
+            Span::styled(" ✓", Style::default().fg(Color::DarkGray))
+        }
+        DeliveryStatus::Delivered => {
+            Span::styled(" ✓✓", Style::default().fg(Color::Cyan))
+        }
+    }
 }
 
 fn format_reaction_summary(msg: &crate::app::ChatMessage) -> String {
