@@ -13,31 +13,52 @@ const MAX_MESSAGES: usize = 1000;
 const MAX_USERS: usize = 100;
 
 /// Message types for the GhostWire protocol
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone)]
 pub enum MessageType {
-    #[serde(rename = "MSG")]
     Message,
-    #[serde(rename = "AUTH")]
     Auth,
-    #[serde(rename = "SYS")]
     System,
-    #[serde(rename = "TYPING")]
     Typing,
     /// Key exchange message for E2EE (v0.3.0)
-    #[serde(rename = "KEY_EXCHANGE")]
     KeyExchange,
     /// Sender key distribution for group E2EE (v0.4.0)
-    #[serde(rename = "SENDER_KEY")]
     SenderKey,
     /// Relay-generated delivery receipt (v0.7.0). Sent to the original sender
     /// after a DM is successfully unicasted to the recipient's channel.
-    #[serde(rename = "ACK")]
     Ack,
     /// Catch-all for unrecognised message types from future protocol versions.
     /// Prevents parse errors when clients of different versions communicate.
-    #[serde(other)]
     Unknown,
+}
+
+impl serde::Serialize for MessageType {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            Self::Message => "MSG",
+            Self::Auth => "AUTH",
+            Self::System => "SYS",
+            Self::Typing => "TYPING",
+            Self::KeyExchange => "KEY_EXCHANGE",
+            Self::SenderKey => "SENDER_KEY",
+            Self::Ack => "ACK",
+            Self::Unknown => "UNKNOWN",
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MessageType {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "MSG" => Self::Message,
+            "AUTH" => Self::Auth,
+            "SYS" => Self::System,
+            "TYPING" => Self::Typing,
+            "KEY_EXCHANGE" => Self::KeyExchange,
+            "SENDER_KEY" => Self::SenderKey,
+            "ACK" => Self::Ack,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 /// Delivery status for outbound messages (v0.7.0).
