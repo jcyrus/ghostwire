@@ -95,9 +95,10 @@ pub struct WireMessage {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction_emoji: Option<String>,
-    /// DH ratchet public key (v0.7.0). Present on encrypted DMs and
-    /// KEY_EXCHANGE messages. Absent on plaintext/group/typing messages.
-    /// Old clients ignore unknown fields; new clients ignore absence (v0.6 fallback).
+    /// DH ratchet public key (v0.7.0). Present on encrypted DMs, encrypted
+    /// group messages, and KEY_EXCHANGE messages. Absent on plaintext/typing
+    /// messages. Old clients ignore unknown fields; new clients ignore absence
+    /// (v0.6 fallback).
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ratchet_key: Option<String>,

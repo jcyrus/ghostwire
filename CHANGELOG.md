@@ -33,9 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Wire format** — `WireMessage` gains `ratchet_key: Option<String>` (omitted when
   `None`). Old clients ignore the new field; new clients tolerate its absence.
-- **SENDER_KEY payload** grows from 64 to 96 bytes. v0.6 receivers reject 96-byte
-  distributions; all group members must upgrade to v0.7 before group messaging
-  resumes after a `/groupkey` redistribution.
+- **SENDER_KEY payload** grows from 64 to 96 bytes. **⚠️ Breaking for mixed-version
+  groups**: v0.6 clients reject 96-byte distributions and will lose group
+  decryption until they upgrade. Coordinate group upgrades before running
+  `/groupkey` — use DMs for the transition period if members cannot upgrade
+  simultaneously. Once all members are on v0.7, re-run `/groupkey` to
+  redistribute with the new payload format.
 
 ### Security
 

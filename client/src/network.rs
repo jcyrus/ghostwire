@@ -1521,6 +1521,23 @@ mod tests {
     }
 
     #[test]
+    fn test_unknown_wire_type_deserializes_to_unknown_variant() {
+        // Verify #[serde(other)]: serialise a known message, swap the variant
+        // name in the JSON to an unrecognised value, then confirm it deserialises
+        // to MessageType::Unknown instead of erroring.
+        let msg = mock_wire_message(MessageType::Message, "relay");
+        let json = serde_json::to_string(&msg).unwrap();
+        // The internally-tagged format contains "MSG" as the variant discriminant.
+        let json_unknown = json.replace("\"MSG\"", "\"FUTURE_TYPE_V99\"");
+        let decoded: WireMessage =
+            serde_json::from_str(&json_unknown).expect("unrecognised type must not error");
+        assert!(
+            matches!(decoded.msg_type, MessageType::Unknown),
+            "unrecognised type string must map to MessageType::Unknown"
+        );
+    }
+
+    #[test]
     fn staggered_join_sequence_triggers_rekey_for_late_peer() {
         let local_username = "alice";
 
