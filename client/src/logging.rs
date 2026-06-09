@@ -1,4 +1,4 @@
-// GhostWire Client - Logging System
+// ZeroDrop Client - Logging System
 // Sets up tracing with file appender and console output
 
 use std::path::PathBuf;
@@ -8,12 +8,12 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 /// Initialize the logging system
 ///
 /// Logs are written to:
-/// - ~/.config/ghostwire/logs/ghostwire.log (rotating daily)
+/// - ~/.config/zerodrop/logs/zerodrop.log (rotating daily)
 ///
 /// Log level can be controlled via RUST_LOG environment variable:
-/// - RUST_LOG=debug ghostwire
-/// - RUST_LOG=info ghostwire
-/// - RUST_LOG=ghostwire=debug ghostwire
+/// - RUST_LOG=debug zerodrop
+/// - RUST_LOG=info zerodrop
+/// - RUST_LOG=zerodrop=debug zerodrop
 pub fn init_logging() -> anyhow::Result<()> {
     // Get log directory
     let log_dir = get_log_dir()?;
@@ -22,7 +22,7 @@ pub fn init_logging() -> anyhow::Result<()> {
     std::fs::create_dir_all(&log_dir)?;
 
     // Create daily rotating file appender
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, log_dir.clone(), "ghostwire.log");
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, log_dir.clone(), "zerodrop.log");
 
     // Create the file layer
     let file_layer = fmt::layer()
@@ -42,7 +42,7 @@ pub fn init_logging() -> anyhow::Result<()> {
         .with(file_layer)
         .try_init()?;
 
-    tracing::info!("GhostWire client logging initialized");
+    tracing::info!("ZeroDrop client logging initialized");
     tracing::info!("Logs directory: {}", log_dir.display());
 
     Ok(())
@@ -51,7 +51,7 @@ pub fn init_logging() -> anyhow::Result<()> {
 /// Get the log directory path
 fn get_log_dir() -> anyhow::Result<PathBuf> {
     // Use directories crate to get cross-platform config directory
-    let config_dir = directories::ProjectDirs::from("com", "jcyrus", "ghostwire")
+    let config_dir = directories::ProjectDirs::from("com", "jcyrus", "zerodrop")
         .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
 
     let log_dir = config_dir.config_dir().join("logs");
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn test_get_log_dir() {
         let log_dir = get_log_dir().unwrap();
-        assert!(log_dir.to_string_lossy().contains("ghostwire"));
+        assert!(log_dir.to_string_lossy().contains("zerodrop"));
         assert!(log_dir.to_string_lossy().contains("logs"));
     }
 }

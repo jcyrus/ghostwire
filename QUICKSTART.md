@@ -1,6 +1,6 @@
-# GhostWire - Quick Start Guide
+# ZeroDrop - Quick Start Guide
 
-## 🚀 Running GhostWire
+## 🚀 Running ZeroDrop
 
 ### Prerequisites
 
@@ -17,15 +17,15 @@ Open a terminal and run:
 
 ```bash
 cd .
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 ```
 
 You should see:
 
 ```
-INFO ghostwire_server: 🚀 Starting GhostWire Relay Server (Local Mode)
-INFO ghostwire_server: 👻 GhostWire Relay listening on http://0.0.0.0:8080
-INFO ghostwire_server: 📡 WebSocket endpoint: ws://0.0.0.0:8080/ws
+INFO zerodrop_server: 🚀 Starting ZeroDrop Relay Server (Local Mode)
+INFO zerodrop_server: 👻 ZeroDrop Relay listening on http://0.0.0.0:8080
+INFO zerodrop_server: 📡 WebSocket endpoint: ws://0.0.0.0:8080/ws
 ```
 
 ### Step 2: Start Client #1 (Alice)
@@ -34,13 +34,13 @@ Open a **new terminal** and run:
 
 ```bash
 cd .
-cargo run -p ghostwire-client alice ws://localhost:8080/ws
+cargo run -p zerodrop alice ws://localhost:8080/ws
 ```
 
 You should see the TUI with:
 
 - Green "● CONNECTED" status
-- Welcome message: "Welcome to GhostWire, alice!"
+- Welcome message: "Welcome to ZeroDrop, alice!"
 
 ### Step 3: Start Client #2 (Bob)
 
@@ -48,13 +48,13 @@ Open **another terminal** and run:
 
 ```bash
 cd .
-cargo run -p ghostwire-client bob ws://localhost:8080/ws
+cargo run -p zerodrop bob ws://localhost:8080/ws
 ```
 
 You should see the TUI with:
 
 - Green "● CONNECTED" status
-- Welcome message: "Welcome to GhostWire, bob!"
+- Welcome message: "Welcome to ZeroDrop, bob!"
 - System message: "alice joined the chat"
 
 ---
@@ -115,7 +115,7 @@ You should see the TUI with:
 **Server Logs:**
 
 ```
-DEBUG ghostwire_server::relay: Client 0 sent: 123 bytes
+DEBUG zerodrop_server::relay: Client 0 sent: 123 bytes
 ```
 
 ### When Bob Replies
@@ -172,13 +172,13 @@ cd server
 cargo shuttle deploy
 ```
 
-You'll get a URL like: `https://ghostwire-xxxxx.shuttleapp.rs`
+You'll get a URL like: `https://zerodrop-xxxxx.shuttleapp.rs`
 
 ### Connect Clients to Deployed Server
 
 ```bash
 # Replace with your actual Shuttle URL
-cargo run -p ghostwire-client alice wss://ghostwire-xxxxx.shuttleapp.rs/ws
+cargo run -p zerodrop alice wss://zerodrop-xxxxx.shuttleapp.rs/ws
 ```
 
 **Note:** Use `wss://` (secure WebSocket) for Shuttle deployments.
@@ -190,15 +190,15 @@ cargo run -p ghostwire-client alice wss://ghostwire-xxxxx.shuttleapp.rs/ws
 ### Client
 
 ```bash
-cargo build -p ghostwire-client --release
-./target/release/ghostwire alice ws://localhost:8080/ws
+cargo build -p zerodrop --release
+./target/release/zerodrop alice ws://localhost:8080/ws
 ```
 
 ### Server
 
 ```bash
-cargo build -p ghostwire-server --release
-./target/release/ghostwire-server
+cargo build -p zerodrop-server --release
+./target/release/zerodrop-server
 ```
 
 ---
@@ -217,9 +217,9 @@ cargo build -p ghostwire-server --release
 
 | Command                                      | Description                |
 | -------------------------------------------- | -------------------------- |
-| `cargo run --bin ghostwire-local`            | Start server locally       |
-| `cargo run -p ghostwire-client <name>`       | Start client with username |
-| `cargo run -p ghostwire-client <name> <url>` | Connect to custom server   |
+| `cargo run --bin zerodrop-local`            | Start server locally       |
+| `cargo run -p zerodrop <name>`       | Start client with username |
+| `cargo run -p zerodrop <name> <url>` | Connect to custom server   |
 | `cargo build --release`                      | Build optimized binaries   |
 | `cd server && cargo shuttle deploy`          | Deploy to Shuttle          |
 

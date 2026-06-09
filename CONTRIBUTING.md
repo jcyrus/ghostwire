@@ -1,6 +1,6 @@
-# Contributing to GhostWire
+# Contributing to ZeroDrop
 
-Thank you for your interest in contributing to GhostWire! We welcome contributions from the community.
+Thank you for your interest in contributing to ZeroDrop! We welcome contributions from the community.
 
 ## 🚀 Getting Started
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to GhostWire! We welcome contributio
 ### Setup
 
 ```bash
-git clone https://github.com/jcyrus/GhostWire.git
-cd GhostWire
+git clone https://github.com/jcyrus/zerodrop.git
+cd ZeroDrop
 cargo build
 ```
 
@@ -31,7 +31,7 @@ cargo build
 
 - Open an issue with the `enhancement` label
 - Describe the use case
-- Explain how it fits with GhostWire's philosophy
+- Explain how it fits with ZeroDrop's philosophy
 
 ### Pull Requests
 
@@ -118,7 +118,7 @@ chore(deps): update ratatui to 0.26
 cargo test
 
 # Test specific package
-cargo test -p ghostwire-client
+cargo test -p zerodrop
 
 # Run with output
 cargo test -- --nocapture
@@ -142,4 +142,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ---
 
-**Thank you for contributing to GhostWire! 👻**
+**Thank you for contributing to ZeroDrop! 👻**

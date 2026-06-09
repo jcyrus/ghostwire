@@ -1,4 +1,4 @@
-# GhostWire Roadmap
+# ZeroDrop Roadmap
 
 **Vision**: A secure, ephemeral, terminal-based communication platform with zero-trust architecture and end-to-end encryption.
 

@@ -1,6 +1,6 @@
-# GhostWire User Guide
+# ZeroDrop User Guide
 
-A comprehensive guide to using the GhostWire encrypted chat client.
+A comprehensive guide to using the ZeroDrop encrypted chat client.
 
 > **New here?** See the [Quick Start](../../QUICKSTART.md) for a 5-minute local setup, then come back here for the full reference.
 
@@ -28,10 +28,10 @@ A comprehensive guide to using the GhostWire encrypted chat client.
 
 | Platform             | Command                                                                                           |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
-| macOS (Homebrew)     | `brew install jcyrus/tap/ghostwire`                                                               |
-| Windows (Scoop)      | `scoop bucket add ghostwire https://github.com/jcyrus/scoop-ghostwire && scoop install ghostwire` |
-| Linux / macOS (curl) | `curl -fsSL https://ghost.jcyrus.com/install.sh \| sh`                                            |
-| Windows (PowerShell) | `irm https://ghost.jcyrus.com/install.ps1 \| iex`                                                 |
+| macOS (Homebrew)     | `brew install jcyrus/tap/zerodrop`                                                               |
+| Windows (Scoop)      | `scoop bucket add zerodrop https://github.com/jcyrus/scoop-zerodrop && scoop install zerodrop` |
+| Linux / macOS (curl) | `curl -fsSL https://zerodrop.jcyrus.com/install.sh \| sh`                                            |
+| Windows (PowerShell) | `irm https://zerodrop.jcyrus.com/install.ps1 \| iex`                                                 |
 
 For Windows-specific details (PATH setup, troubleshooting), see [WINDOWS.md](WINDOWS.md).
 
@@ -39,13 +39,13 @@ For Windows-specific details (PATH setup, troubleshooting), see [WINDOWS.md](WIN
 
 ```bash
 # Connect with a random username
-ghostwire
+zerodrop
 
 # Choose your username
-ghostwire alice
+zerodrop alice
 
 # Connect to a custom server
-ghostwire alice ws://localhost:8080/ws
+zerodrop alice ws://localhost:8080/ws
 ```
 
 **Arguments:**
@@ -53,13 +53,13 @@ ghostwire alice ws://localhost:8080/ws
 | Argument     | Required | Default                     | Description               |
 | ------------ | -------- | --------------------------- | ------------------------- |
 | `USERNAME`   | No       | `ghost_XXXXXXXX` (random)   | Your display name         |
-| `SERVER_URL` | No       | `wss://ghost.jcyrus.com/ws` | WebSocket server endpoint |
+| `SERVER_URL` | No       | `wss://zerodrop.jcyrus.com/ws` | WebSocket server endpoint |
 
 ### First Launch
 
 When you connect, you'll see:
 
-1. A welcome message: _"Welcome to GhostWire, \<username\>!"_
+1. A welcome message: _"Welcome to ZeroDrop, \<username\>!"_
 2. A _"Connected"_ system message
 3. The three-panel interface ready for chatting
 
@@ -71,7 +71,7 @@ You start in **Normal mode** — press `i` or `Enter` to start typing.
 
 ## 2. Interface Overview
 
-GhostWire uses a three-panel terminal interface:
+ZeroDrop uses a three-panel terminal interface:
 
 ```
 ┌─ Channels ──┬─── Chat ──────────────────────┬─ Activity ──┐
@@ -122,7 +122,7 @@ You start in Normal mode. It's for navigation and reading.
 | Key           | Action                                                    |
 | ------------- | --------------------------------------------------------- |
 | `i` / `Enter` | Enter Edit mode (start typing)                            |
-| `q` / `Esc`   | Quit GhostWire                                            |
+| `q` / `Esc`   | Quit ZeroDrop                                            |
 | `j` / `↓`     | Scroll chat down (newer)                                  |
 | `k` / `↑`     | Scroll chat up (older)                                    |
 | `PageDown`    | Scroll down ~20 lines                                     |
@@ -235,7 +235,7 @@ Distribute a group encryption key to specified users:
 
 ### Markdown Formatting
 
-GhostWire supports lightweight markdown in chat messages:
+ZeroDrop supports lightweight markdown in chat messages:
 
 | Syntax                             | Renders as                                       |
 | ---------------------------------- | ------------------------------------------------ |
@@ -250,7 +250,7 @@ Fenced code blocks span multiple lines:
 ````
 ```
 fn main() {
-    println!("Hello, GhostWire!");
+    println!("Hello, ZeroDrop!");
 }
 ```
 ````
@@ -318,7 +318,7 @@ For a detailed guide on the channel system, see [CHANNELS.md](../../CHANNELS.md)
 
 ### Automatic Key Exchange
 
-When you connect, GhostWire automatically performs an X25519 key exchange with other online users. This establishes shared secrets for encrypting messages — no manual setup needed.
+When you connect, ZeroDrop automatically performs an X25519 key exchange with other online users. This establishes shared secrets for encrypting messages — no manual setup needed.
 
 ### Username Colors
 
@@ -335,7 +335,7 @@ For high-security conversations, verify peers out-of-band:
 
 ### Trust Model
 
-GhostWire uses a **Trust On First Use (TOFU)** model by default. The first time you see a peer's key, it's accepted. Subsequent key changes trigger warnings.
+ZeroDrop uses a **Trust On First Use (TOFU)** model by default. The first time you see a peer's key, it's accepted. Subsequent key changes trigger warnings.
 
 For the full cryptographic design and threat model, see [SECURITY.md](SECURITY.md).
 
@@ -343,19 +343,19 @@ For the full cryptographic design and threat model, see [SECURITY.md](SECURITY.m
 
 ## 8. Configuration
 
-GhostWire stores its configuration at:
+ZeroDrop stores its configuration at:
 
 ```
-~/.config/ghostwire/config.toml
+~/.config/zerodrop/config.toml
 ```
 
-If the file doesn't exist, GhostWire creates one with defaults on first launch.
+If the file doesn't exist, ZeroDrop creates one with defaults on first launch.
 
 ### Full Configuration Reference
 
 ```toml
 # Server to connect to (overridden by CLI argument)
-default_server_url = "wss://ghost.jcyrus.com/ws"
+default_server_url = "wss://zerodrop.jcyrus.com/ws"
 
 # Send typing indicators to other users
 send_typing_indicators = true
@@ -378,7 +378,7 @@ max_backoff_secs = 16      # Maximum retry delay (exponential backoff)
 
 | Option                                | Type    | Default                     | Description                                                |
 | ------------------------------------- | ------- | --------------------------- | ---------------------------------------------------------- |
-| `default_server_url`                  | String  | `wss://ghost.jcyrus.com/ws` | WebSocket URL for the relay server                         |
+| `default_server_url`                  | String  | `wss://zerodrop.jcyrus.com/ws` | WebSocket URL for the relay server                         |
 | `send_typing_indicators`              | Boolean | `true`                      | Whether to broadcast typing status                         |
 | `log_retention_days`                  | Integer | `7`                         | Days to keep rotated log files                             |
 | `timestamp_format`                    | String  | `24h`                       | Timestamp display: `24h`, `12h`, `DateTime`, or `Relative` |
@@ -411,7 +411,7 @@ This is useful for maximizing chat space on smaller terminals.
 
 ## 10. Fonts & Terminal Recommendations
 
-GhostWire uses emoji throughout the UI — reactions (`👍 🎉 ❤️`), status icons, telemetry indicators, and more. To get proper rendering, your terminal and font need full Unicode and emoji support.
+ZeroDrop uses emoji throughout the UI — reactions (`👍 🎉 ❤️`), status icons, telemetry indicators, and more. To get proper rendering, your terminal and font need full Unicode and emoji support.
 
 ### Recommended Fonts
 
@@ -429,7 +429,7 @@ Use a font with built-in emoji glyphs or a [Nerd Font](https://www.nerdfonts.com
 
 ### Recommended Terminals
 
-Not all terminal emulators render emoji equally well. The following are tested and known to work with GhostWire:
+Not all terminal emulators render emoji equally well. The following are tested and known to work with ZeroDrop:
 
 | Platform           | Terminal                                    | Notes                                                                                   |
 | ------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -450,7 +450,7 @@ Not all terminal emulators render emoji equally well. The following are tested a
 1. **Install a Nerd Font** — download from [nerdfonts.com](https://www.nerdfonts.com/font-downloads) and install system-wide
 2. **Set it in your terminal** — change the font in your terminal's preferences to the Nerd Font variant (e.g., `JetBrainsMono Nerd Font`)
 3. **Verify** — run `echo "👍 🎉 ❤️ 🔒 ℹ ⚠ ✖"` in your terminal; all characters should render as distinct glyphs without overlap
-4. **Launch GhostWire** — reactions and status icons should now display correctly
+4. **Launch ZeroDrop** — reactions and status icons should now display correctly
 
 > **Note:** If you use `tmux` or `screen`, make sure your multiplexer also supports UTF-8. For tmux, add `set -g default-terminal "tmux-256color"` and `set -gq allow-passthrough on` to your `~/.tmux.conf`.
 
@@ -462,7 +462,7 @@ Not all terminal emulators render emoji equally well. The following are tested a
 
 **"○ DISCONNECTED" in the title bar**
 
-GhostWire will auto-reconnect using exponential backoff (configurable — see [Configuration](#8-configuration)). Common causes:
+ZeroDrop will auto-reconnect using exponential backoff (configurable — see [Configuration](#8-configuration)). Common causes:
 
 - Server is down or restarting
 - Network connectivity lost
@@ -474,27 +474,27 @@ GhostWire will auto-reconnect using exponential backoff (configurable — see [C
 Make sure the local server is running:
 
 ```bash
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 ```
 
 Then connect with:
 
 ```bash
-ghostwire alice ws://localhost:8080/ws
+zerodrop alice ws://localhost:8080/ws
 ```
 
 ### Log Files
 
-GhostWire writes logs to:
+ZeroDrop writes logs to:
 
 ```
-~/.config/ghostwire/logs/
+~/.config/zerodrop/logs/
 ```
 
 Set the `RUST_LOG` environment variable for verbose output:
 
 ```bash
-RUST_LOG=debug ghostwire alice
+RUST_LOG=debug zerodrop alice
 ```
 
 ### Security Audit Log
@@ -502,14 +502,14 @@ RUST_LOG=debug ghostwire alice
 Security-relevant events (key exchanges, verifications, encryption errors) are logged to:
 
 ```
-~/.config/ghostwire/security_audit.log
+~/.config/zerodrop/security_audit.log
 ```
 
 ### Common Issues
 
 | Problem                        | Solution                                                                                        |
 | ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `ghostwire: command not found` | Ensure the install directory is in your PATH. See [WINDOWS.md](WINDOWS.md) for Windows.         |
+| `zerodrop: command not found` | Ensure the install directory is in your PATH. See [WINDOWS.md](WINDOWS.md) for Windows.         |
 | Messages not encrypted (no 🔒) | Key exchange hasn't completed yet with that peer. Wait for them to come online.                 |
 | Username shows wrong color     | The peer's public key changed (reconnection or new client). Use `/verify` to re-check identity. |
 | Can't see the right panel      | Press `F10` to toggle it back on.                                                               |

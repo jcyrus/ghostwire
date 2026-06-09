@@ -2,7 +2,7 @@
 
 ## Problem
 
-Running `cargo run -p ghostwire-server` failed with:
+Running `cargo run -p zerodrop-server` failed with:
 
 ```
 Runtime received malformed or incorrect args, missing required argument --port
@@ -18,8 +18,8 @@ Created a **separate binary** for local development that doesn't use Shuttle:
 
 1. **[`server/Cargo.toml`](../../server/Cargo.toml)**
    - Added two binary targets:
-     - `ghostwire-server` - For Shuttle deployment (uses `src/main.rs`)
-     - `ghostwire-local` - For local development (uses `src/local.rs`)
+     - `zerodrop-server` - For Shuttle deployment (uses `src/main.rs`)
+     - `zerodrop-local` - For local development (uses `src/local.rs`)
 
 2. **[`server/src/local.rs`](../../server/src/local.rs)** (NEW)
    - Standalone binary with `#[tokio::main]`
@@ -36,15 +36,15 @@ Created a **separate binary** for local development that doesn't use Shuttle:
 ### Local Development (NEW)
 
 ```bash
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 ```
 
 Output:
 
 ```
-INFO ghostwire_server: 🚀 Starting GhostWire Relay Server (Local Mode)
-INFO ghostwire_server: 👻 GhostWire Relay listening on http://0.0.0.0:8080
-INFO ghostwire_server: 📡 WebSocket endpoint: ws://0.0.0.0:8080/ws
+INFO zerodrop_server: 🚀 Starting ZeroDrop Relay Server (Local Mode)
+INFO zerodrop_server: 👻 ZeroDrop Relay listening on http://0.0.0.0:8080
+INFO zerodrop_server: 📡 WebSocket endpoint: ws://0.0.0.0:8080/ws
 ```
 
 ### Shuttle Deployment (Unchanged)
@@ -58,8 +58,8 @@ cargo shuttle deploy
 
 | Binary             | Purpose            | Runtime                 | Entry Point    |
 | ------------------ | ------------------ | ----------------------- | -------------- |
-| `ghostwire-server` | Shuttle deployment | `shuttle_runtime::main` | `src/main.rs`  |
-| `ghostwire-local`  | Local development  | `tokio::main`           | `src/local.rs` |
+| `zerodrop-server` | Shuttle deployment | `shuttle_runtime::main` | `src/main.rs`  |
+| `zerodrop-local`  | Local development  | `tokio::main`           | `src/local.rs` |
 
 **Benefits:**
 
@@ -73,13 +73,13 @@ cargo shuttle deploy
 ### Start Server
 
 ```bash
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 ```
 
 ### Connect Client
 
 ```bash
-cargo run -p ghostwire-client alice ws://localhost:8080/ws
+cargo run -p zerodrop alice ws://localhost:8080/ws
 ```
 
 ## Documentation Updated
@@ -87,4 +87,4 @@ cargo run -p ghostwire-client alice ws://localhost:8080/ws
 - ✅ [`QUICKSTART.md`](../../QUICKSTART.md)
 - ✅ [`docs/SERVER.md`](SERVER.md)
 
-All references to `cargo run -p ghostwire-server` have been updated to `cargo run --bin ghostwire-local`.
+All references to `cargo run -p zerodrop-server` have been updated to `cargo run --bin zerodrop-local`.

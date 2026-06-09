@@ -1,4 +1,4 @@
-// GhostWire Client - Error Handling and Recovery
+// ZeroDrop Client - Error Handling and Recovery
 // Provides user-friendly error messages with troubleshooting hints
 
 #![allow(dead_code)]
@@ -111,7 +111,7 @@ impl UserError {
     fn get_hint_and_recovery(error_type: &ErrorType) -> (Option<String>, bool) {
         match error_type {
             ErrorType::Connection(ConnectionError::CannotConnect) => (
-                Some("Check your internet connection and server URL. Try: ghostwire --help".to_string()),
+                Some("Check your internet connection and server URL. Try: zerodrop --help".to_string()),
                 true
             ),
             ErrorType::Connection(ConnectionError::Timeout) => (
@@ -170,7 +170,7 @@ impl UserError {
                 true
             ),
             ErrorType::Configuration(ConfigError::InvalidFormat) => (
-                Some("Config file has invalid format. Delete ~/.config/ghostwire/config.toml to reset.".to_string()),
+                Some("Config file has invalid format. Delete ~/.config/zerodrop/config.toml to reset.".to_string()),
                 true
             ),
             ErrorType::Configuration(ConfigError::MissingField) => (

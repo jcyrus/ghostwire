@@ -1,6 +1,6 @@
-# GhostWire User Documentation
+# ZeroDrop User Documentation
 
-Guides for installing, configuring, and using GhostWire.
+Guides for installing, configuring, and using ZeroDrop.
 
 ## 📖 Guides
 

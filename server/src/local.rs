@@ -1,4 +1,4 @@
-// GhostWire Server - Local Development Entry Point
+// ZeroDrop Server - Local Development Entry Point
 // This binary is used for local development without Shuttle runtime
 
 mod relay;
@@ -22,7 +22,7 @@ use tracing_subscriber::EnvFilter;
 
 /// Health check endpoint
 async fn health_check() -> &'static str {
-    "GhostWire Relay - Status: ONLINE"
+    "ZeroDrop Relay - Status: ONLINE"
 }
 
 /// Root endpoint with server info
@@ -54,13 +54,13 @@ async fn main() {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| {
                 EnvFilter::new("info")
-                    .add_directive("ghostwire_server=debug".parse().expect("Invalid tracing directive"))
+                    .add_directive("zerodrop_server=debug".parse().expect("Invalid tracing directive"))
                     .add_directive("tower_http=debug".parse().expect("Invalid tracing directive"))
             }),
         )
         .init();
 
-    info!("🚀 Starting GhostWire Relay Server (Local Mode)");
+    info!("🚀 Starting ZeroDrop Relay Server (Local Mode)");
 
     // Connection-level rate limit: 1 new WS connection per 6 s ≈ 10/min, burst 3.
     let mut governor_builder = GovernorConfigBuilder::default();
@@ -91,7 +91,7 @@ async fn main() {
 
     // Bind to address
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    info!("👻 GhostWire Relay listening on http://{}", addr);
+    info!("👻 ZeroDrop Relay listening on http://{}", addr);
     info!("📡 WebSocket endpoint: ws://{}/ws", addr);
     info!("🌐 Status page: http://{}", addr);
 

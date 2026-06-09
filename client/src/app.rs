@@ -1,4 +1,4 @@
-// GhostWire Client - Application State
+// ZeroDrop Client - Application State
 // This module manages the core application state and business logic
 
 use chrono::{DateTime, Utc};
@@ -12,7 +12,7 @@ const MAX_MESSAGES: usize = 1000;
 /// Maximum number of users to display
 const MAX_USERS: usize = 100;
 
-/// Message types for the GhostWire protocol
+/// Message types for the ZeroDrop protocol
 #[derive(Debug, Clone)]
 pub enum MessageType {
     Message,
@@ -623,7 +623,7 @@ impl App {
         // Create global channel
         let mut global_channel = Channel::global();
         global_channel.add_message(ChatMessage::system(format!(
-            "Welcome to GhostWire, {}!\nConnected server: {}",
+            "Welcome to ZeroDrop, {}!\nConnected server: {}",
             username, server_url
         )));
 

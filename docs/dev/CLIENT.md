@@ -1,8 +1,8 @@
-# GhostWire Client - Architecture & Usage Guide
+# ZeroDrop Client - Architecture & Usage Guide
 
 ## 🏗️ Architecture Overview
 
-The GhostWire client implements a **critical async/sync split pattern** to ensure the UI remains responsive at 60fps while handling network I/O asynchronously.
+The ZeroDrop client implements a **critical async/sync split pattern** to ensure the UI remains responsive at 60fps while handling network I/O asynchronously.
 
 ### Thread Model
 
@@ -80,7 +80,7 @@ The GhostWire client implements a **critical async/sync split pattern** to ensur
 
 ```
 ┌─────────────┬──────────────────────────┬─────────────┐
-│   Users     │      GhostWire           │  Telemetry  │
+│   Users     │      ZeroDrop           │  Telemetry  │
 │   (20%)     │      ● CONNECTED         │   (20%)     │
 │             │                          │             │
 │ ● alice     │ [12:34:56] alice: hi     │ ┌─────────┐ │
@@ -194,35 +194,35 @@ UI Thread                Network Thread
 
 ```bash
 # With default username (random ghost_XXXXXXXX)
-cargo run -p ghostwire-client
+cargo run -p zerodrop
 
 # With custom username
-cargo run -p ghostwire-client alice
+cargo run -p zerodrop alice
 
 # With custom username and server URL
-cargo run -p ghostwire-client alice ws://example.com:8080/ws
+cargo run -p zerodrop alice ws://example.com:8080/ws
 ```
 
 ### Building Release Binary
 
 ```bash
-cargo build -p ghostwire-client --release
+cargo build -p zerodrop --release
 
 # Binary location
-./target/release/ghostwire
+./target/release/zerodrop
 ```
 
 ### Running Release Binary
 
 ```bash
 # Default
-./target/release/ghostwire
+./target/release/zerodrop
 
 # With username
-./target/release/ghostwire alice
+./target/release/zerodrop alice
 
 # With username and server
-./target/release/ghostwire alice ws://localhost:8080/ws
+./target/release/zerodrop alice ws://localhost:8080/ws
 ```
 
 ---
@@ -366,7 +366,7 @@ Style::default().fg(Color::Magenta)
 
 ### Adjusting Layout
 
-Edit [`ui.rs`](GhostWire/client/src/ui.rs) `render()` function:
+Edit [`ui.rs`](ZeroDrop/client/src/ui.rs) `render()` function:
 
 ```rust
 // Current: 20% | 60% | 20%
@@ -403,7 +403,7 @@ Constraint::Percentage(15),
 
 ## 🔜 Next Steps
 
-To complete GhostWire, you need to:
+To complete ZeroDrop, you need to:
 
 1. **Formalize Group UX** - Add named group creation, membership, and invite flows
 2. **Harden Metadata Privacy** - Implement sealed sender and message padding

@@ -1,4 +1,4 @@
-// GhostWire Server - WebSocket Relay
+// ZeroDrop Server - WebSocket Relay
 //
 // Historically this was a pure "dumb broadcast" relay. As of v0.6 it does the
 // minimum parsing needed to route direct messages to a single recipient

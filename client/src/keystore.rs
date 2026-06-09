@@ -1,4 +1,4 @@
-// GhostWire Client - Key Store Module
+// ZeroDrop Client - Key Store Module
 // Manages ephemeral encryption keys with automatic rotation
 
 use crate::crypto::{
@@ -32,7 +32,7 @@ const MAX_KNOWN_PEER_KEYS: usize = 10_000;
 /// Result of comparing an incoming peer public key against the first-seen
 /// (trust-on-first-use) value we recorded for that username.
 ///
-/// Note: GhostWire's KEY_EXCHANGE carries the rotating X25519 *ephemeral* key,
+/// Note: ZeroDrop's KEY_EXCHANGE carries the rotating X25519 *ephemeral* key,
 /// not a persistent identity key, so a legitimate 24-hour rotation also shows up
 /// as `Changed`. Callers therefore treat a change to a *verified* peer as a
 /// serious warning (verification is invalidated) but a change to an unverified
@@ -296,7 +296,7 @@ impl KeyStore {
         let identity = generate_identity_keypair();
 
         // Lightweight startup self-check to validate identity key machinery.
-        let probe = b"ghostwire-identity-selfcheck";
+        let probe = b"zerodrop-identity-selfcheck";
         let signature = sign_message(probe, &identity.signing_key);
         if let Err(e) = verify_signature(probe, &signature, &identity.verifying_key) {
             tracing::warn!("Identity signature self-check failed: {}", e);
@@ -400,7 +400,7 @@ impl KeyStore {
 
         // Base ECDH session keys (v0.6 path).
         let session_keys =
-            derive_session_keys(&self.ephemeral.secret, &their_public, b"GhostWire v0.4.0")?;
+            derive_session_keys(&self.ephemeral.secret, &their_public, b"ZeroDrop v0.4.0")?;
 
         // Role-differentiated send/recv chains (lex ordering of ephemeral public keys).
         let our_pub = self.ephemeral.public.as_bytes();

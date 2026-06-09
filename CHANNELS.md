@@ -1,8 +1,8 @@
-# GhostWire - Multi-Channel Usage Guide
+# ZeroDrop - Multi-Channel Usage Guide
 
 ## 🎯 What's New: Channel System
 
-GhostWire now supports **multiple channels** including:
+ZeroDrop now supports **multiple channels** including:
 
 - **Global Channel** (`# global`) - Everyone sees messages
 - **Direct Messages** (`@ username`) - Private 1-on-1 conversations
@@ -104,9 +104,9 @@ GhostWire now supports **multiple channels** including:
 
 ### Scenario 1: Global Chat
 
-1. Start server: `cargo run --bin ghostwire-local`
-2. Start Alice: `cargo run -p ghostwire-client alice ws://localhost:8080/ws`
-3. Start Bob: `cargo run -p ghostwire-client bob ws://localhost:8080/ws`
+1. Start server: `cargo run --bin zerodrop-local`
+2. Start Alice: `cargo run -p zerodrop alice ws://localhost:8080/ws`
+3. Start Bob: `cargo run -p zerodrop bob ws://localhost:8080/ws`
 4. Both users send messages in `# global`
 5. ✅ Both see all messages
 
@@ -217,7 +217,7 @@ The server currently broadcasts all messages to all clients. **Channel filtering
 
 ```
 ┌─────────────────────────────────────────┐
-│         GhostWire Channels              │
+│         ZeroDrop Channels              │
 ├─────────────────────────────────────────┤
 │ CHANNEL NAVIGATION                      │
 │  h/l  - Select channel                  │

@@ -6,12 +6,12 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 authors = ["jCyrus <jcyrus@users.noreply.github.com>"]
 license = "MIT"
-repository = "https://github.com/jcyrus/GhostWire"
-homepage = "https://github.com/jcyrus/GhostWire"
+repository = "https://github.com/jcyrus/zerodrop"
+homepage = "https://github.com/jcyrus/zerodrop"
 description = "Ephemeral TUI chat client with E2EE and a dumb relay server"
 keywords = ["chat", "tui", "websocket", "terminal", "ratatui"]
 categories = ["command-line-utilities", "network-programming"]

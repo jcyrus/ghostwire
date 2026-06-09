@@ -1,4 +1,4 @@
-// GhostWire Client - Security Audit Logging
+// ZeroDrop Client - Security Audit Logging
 // Logs security-relevant events for audit trail (v0.3.0)
 
 use chrono::Utc;
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_logger_creation() {
-        let temp_dir = std::env::temp_dir().join("ghostwire_test");
+        let temp_dir = std::env::temp_dir().join("zerodrop_test");
         fs::create_dir_all(&temp_dir).unwrap();
 
         let logger = SecurityAuditLogger::new(&temp_dir);

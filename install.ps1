@@ -1,17 +1,17 @@
-# GhostWire Windows Installer
+# ZeroDrop Windows Installer
 # "The server knows nothing. The terminal is everything."
 
 $ErrorActionPreference = "Stop"
 
-$REPO = "jcyrus/GhostWire"
-$BINARY_NAME = "ghostwire.exe"
-$INSTALL_DIR = "$env:LOCALAPPDATA\GhostWire"
+$REPO = "jcyrus/zerodrop"
+$BINARY_NAME = "zerodrop.exe"
+$INSTALL_DIR = "$env:LOCALAPPDATA\ZeroDrop"
 
-Write-Host "👻 Initializing GhostWire Sequence..." -ForegroundColor Green
+Write-Host "👻 Initializing ZeroDrop Sequence..." -ForegroundColor Green
 
 # Detect Architecture
 $ARCH = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
-$ASSET_NAME = "ghostwire-windows-$ARCH.exe"
+$ASSET_NAME = "zerodrop-windows-$ARCH.exe"
 
 Write-Host "Detected: Windows $ARCH" -ForegroundColor Green
 
@@ -75,11 +75,11 @@ if ($USER_PATH -notlike "*$INSTALL_DIR*") {
 }
 
 Write-Host ""
-Write-Host "✅ GhostWire Installed Successfully!" -ForegroundColor Green
+Write-Host "✅ ZeroDrop Installed Successfully!" -ForegroundColor Green
 Write-Host "Installed to: $INSTALL_DIR\$BINARY_NAME" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Run with: " -NoNewline
-Write-Host "ghostwire" -ForegroundColor Green
+Write-Host "zerodrop" -ForegroundColor Green
 Write-Host ""
 Write-Host "If the command is not found, restart your terminal or run:" -ForegroundColor Yellow
 Write-Host "  `$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User')" -ForegroundColor Cyan

@@ -1,8 +1,8 @@
-# GhostWire Server - Relay Architecture
+# ZeroDrop Server - Relay Architecture
 
 ## 🏗️ Overview
 
-The GhostWire server is a **near-dumb relay** - it forwards WebSocket messages without ever decrypting their content; all message security is client-side. As of v0.6 it does the minimum parsing required to **route direct messages to a single recipient** (unicast) instead of broadcasting every DM to all clients. To do this it keeps an in-memory `username → connection` index, so the relay sees DM routing metadata (sender/recipient usernames) but never plaintext. Group, global, typing, and key-exchange traffic — and any DM whose recipient is offline or unknown — still fall back to broadcast.
+The ZeroDrop server is a **near-dumb relay** - it forwards WebSocket messages without ever decrypting their content; all message security is client-side. As of v0.6 it does the minimum parsing required to **route direct messages to a single recipient** (unicast) instead of broadcasting every DM to all clients. To do this it keeps an in-memory `username → connection` index, so the relay sees DM routing metadata (sender/recipient usernames) but never plaintext. Group, global, typing, and key-exchange traffic — and any DM whose recipient is offline or unknown — still fall back to broadcast.
 
 ---
 
@@ -158,7 +158,7 @@ async fn main() -> shuttle_axum::ShuttleAxum {
 The `local_main()` function provides a non-Shuttle entry point for local testing:
 
 ```bash
-cargo run --bin ghostwire-local --release
+cargo run --bin zerodrop-local --release
 # Listens on 0.0.0.0:8080 by default
 ```
 
@@ -170,11 +170,11 @@ cargo run --bin ghostwire-local --release
 
 ```bash
 # Start server
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 
 # Or release mode
-cargo build --bin ghostwire-local --release
-./target/release/ghostwire-local
+cargo build --bin zerodrop-local --release
+./target/release/zerodrop-local
 ```
 
 Server will listen on `http://0.0.0.0:8080`
@@ -192,13 +192,13 @@ cd server
 cargo shuttle deploy
 
 # Output will show your deployment URL
-# e.g., https://ghostwire-XXXXX.shuttleapp.rs
+# e.g., https://zerodrop-XXXXX.shuttleapp.rs
 ```
 
 **WebSocket URL:** Replace `https://` with `wss://`
 
 ```
-wss://ghostwire-XXXXX.shuttleapp.rs/ws
+wss://zerodrop-XXXXX.shuttleapp.rs/ws
 ```
 
 ---
@@ -208,19 +208,19 @@ wss://ghostwire-XXXXX.shuttleapp.rs/ws
 ### Terminal 1: Start Server
 
 ```bash
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 ```
 
 ### Terminal 2: Client (Alice)
 
 ```bash
-cargo run -p ghostwire-client alice ws://localhost:8080/ws
+cargo run -p zerodrop alice ws://localhost:8080/ws
 ```
 
 ### Terminal 3: Client (Bob)
 
 ```bash
-cargo run -p ghostwire-client bob ws://localhost:8080/ws
+cargo run -p zerodrop bob ws://localhost:8080/ws
 ```
 
 **Expected Behavior:**
@@ -238,13 +238,13 @@ The server uses `tracing` for structured logging:
 
 ```bash
 # Default (info level)
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 
 # Debug level
-RUST_LOG=ghostwire_server=debug cargo run --bin ghostwire-local
+RUST_LOG=zerodrop_server=debug cargo run --bin zerodrop-local
 
 # Trace level (very verbose)
-RUST_LOG=ghostwire_server=trace,tower_http=trace cargo run --bin ghostwire-local
+RUST_LOG=zerodrop_server=trace,tower_http=trace cargo run --bin zerodrop-local
 ```
 
 **Log Events:**

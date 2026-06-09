@@ -1,4 +1,4 @@
-// GhostWire Client - Main Entry Point
+// ZeroDrop Client - Main Entry Point
 // This implements the CRITICAL async/sync split architecture:
 // - Main thread: Runs the Ratatui UI loop (synchronous)
 // - Network thread: Runs the WebSocket task (asynchronous via tokio::spawn)
@@ -24,14 +24,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Default server URL (can be overridden via CLI args)
-const DEFAULT_SERVER_URL: &str = "wss://ghost.jcyrus.com/ws";
+const DEFAULT_SERVER_URL: &str = "wss://zerodrop.jcyrus.com/ws";
 
-/// GhostWire - Ephemeral terminal chat client
+/// ZeroDrop - Ephemeral terminal chat client
 #[derive(Parser)]
-#[command(name = "ghostwire")]
+#[command(name = "zerodrop")]
 #[command(author, version, about, long_about = None)]
 #[command(
-    after_help = "EXAMPLES:\n    ghostwire                          # Random username, default server\n    ghostwire alice                    # Custom username\n    ghostwire alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           In edit mode: back to normal | in normal mode: quit\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit"
+    after_help = "EXAMPLES:\n    zerodrop                          # Random username, default server\n    zerodrop alice                    # Custom username\n    zerodrop alice ws://localhost:8080/ws  # Custom server\n\nKEYBOARD SHORTCUTS:\n    Esc           In edit mode: back to normal | in normal mode: quit\n    Tab           Switch channels\n    j/k ↓/↑       Scroll down/up (one line)\n    PgDn/PgUp     Scroll down/up (page)\n    G             Jump to bottom (latest)\n    g             Jump to top (oldest)\n    Ctrl+C        Quit"
 )]
 struct Cli {
     /// Username for the chat session (default: random ghost_XXXXXXXX)
@@ -58,10 +58,10 @@ async fn main() -> anyhow::Result<()> {
     let config = config::load_config().unwrap_or_else(|e| {
         eprintln!("Warning: Could not load config: {}. Using defaults.", e);
         tracing::warn!("Could not load config: {}. Using defaults.", e);
-        config::GhostWireConfig::default()
+        config::ZeroDropConfig::default()
     });
 
-    tracing::info!("GhostWire client starting");
+    tracing::info!("ZeroDrop client starting");
     tracing::info!("Server URL: {}", config.default_server_url);
 
     // Parse command line arguments using clap
@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Error: {:?}", err);
     }
 
-    tracing::info!("GhostWire client shutdown complete");
+    tracing::info!("ZeroDrop client shutdown complete");
     Ok(())
 }
 

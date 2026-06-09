@@ -1,8 +1,8 @@
 <div align="center">
 
-![GhostWire Logo](docs/logo.jpg)
+![ZeroDrop Logo](docs/logo.jpg)
 
-[![Status](https://img.shields.io/website?url=https%3A%2F%2Fghostwire-ardt.shuttle.app%2Fhealth&label=Relay%20Status&style=for-the-badge&color=success)](https://ghostwire-ardt.shuttle.app)
+[![Status](https://img.shields.io/website?url=https%3A%2F%2Fzerodrop-ardt.shuttle.app%2Fhealth&label=Relay%20Status&style=for-the-badge&color=success)](https://zerodrop.jcyrus.com)
 
 **The server knows nothing. The terminal is everything.**
 
@@ -14,11 +14,13 @@
 
 ## 📡 Transmission Incoming
 
-**GhostWire** is a secure, ephemeral TUI chat client for those who prefer keyboards over mouse clicks. Built with **Rust** and **Ratatui**, it combines the aesthetic of a cyberpunk system monitor with the privacy of a dead-drop.
+> **Note on the Rename:** ZeroDrop is now **ZeroDrop**. This change ensures absolute identity clarity and avoids naming collisions with parallel communication tech, keeping this standalone TUI chat fully distinct.
+
+**ZeroDrop** is a secure, ephemeral TUI chat client for those who prefer keyboards over mouse clicks. Built with **Rust** and **Ratatui**, it combines the aesthetic of a cyberpunk system monitor with the privacy of a dead-drop.
 
 ### 📸 Visual Recon
 
-![GhostWire Screenshot](docs/screenshot.jpg)
+![ZeroDrop Screenshot](docs/screenshot.jpg)
 
 ---
 
@@ -43,13 +45,13 @@
 
 ```bash
 brew tap jcyrus/tap
-brew install ghostwire
+brew install zerodrop
 ```
 
 #### ⚡️ Quick Install Script
 
 ```bash
-curl -sL https://ghost.jcyrus.com/install | bash
+curl -sL https://zerodrop.jcyrus.com/install | bash
 ```
 
 ### Windows
@@ -58,16 +60,16 @@ curl -sL https://ghost.jcyrus.com/install | bash
 
 ```powershell
 scoop bucket add jcyrus https://github.com/jcyrus/scoop-bucket
-scoop install ghostwire
+scoop install zerodrop
 ```
 
 #### ⚡️ Quick Install Script
 
 ```powershell
-irm https://ghost.jcyrus.com/install.ps1 | iex
+irm https://zerodrop.jcyrus.com/install.ps1 | iex
 ```
 
-> **Note:** After installation, you may need to restart your terminal for the PATH changes to take effect. If `ghostwire` is not recognized, run:
+> **Note:** After installation, you may need to restart your terminal for the PATH changes to take effect. If `zerodrop` is not recognized, run:
 >
 > ```powershell
 > $env:Path = [System.Environment]::GetEnvironmentVariable('Path','User')
@@ -78,7 +80,7 @@ irm https://ghost.jcyrus.com/install.ps1 | iex
 #### ⚡️ Quick Install Script
 
 ```bash
-curl -sL https://ghost.jcyrus.com/install | bash
+curl -sL https://zerodrop.jcyrus.com/install | bash
 ```
 
 ### 📦 Manual Installation
@@ -93,27 +95,27 @@ curl -sL https://ghost.jcyrus.com/install | bash
 Clone the repository and build the binary:
 
 ```bash
-git clone https://github.com/jcyrus/GhostWire.git
-cd ghostwire
+git clone https://github.com/jcyrus/zerodrop.git
+cd zerodrop
 
 # Build the client only (The part you use)
-cargo build --release -p ghostwire-client
+cargo build --release -p zerodrop
 
 ```
 
-### 🔄 Updating GhostWire
+### 🔄 Updating ZeroDrop
 
 | Method                   | Update Command                                          |
 | :----------------------- | :------------------------------------------------------ |
-| **Homebrew (macOS)**     | `brew upgrade ghostwire`                                |
-| **Scoop (Windows)**      | `scoop update ghostwire`                                |
+| **Homebrew (macOS)**     | `brew upgrade zerodrop`                                |
+| **Scoop (Windows)**      | `scoop update zerodrop`                                |
 | **Quick Install Script** | Re-run the installation command                         |
-| **Manual (from source)** | `git pull && cargo build --release -p ghostwire-client` |
+| **Manual (from source)** | `git pull && cargo build --release -p zerodrop` |
 
 **Check your current version:**
 
 ```bash
-ghostwire --version
+zerodrop --version
 ```
 
 ---
@@ -123,14 +125,14 @@ ghostwire --version
 After installation, connect to the public relay:
 
 ```bash
-# Connect with your username (connects to wss://ghost.jcyrus.com/ws by default)
-ghostwire your_username
+# Connect with your username (connects to wss://zerodrop.jcyrus.com/ws by default)
+zerodrop your_username
 
 # Or connect to a custom server
-ghostwire your_username wss://your-server.com/ws
+zerodrop your_username wss://your-server.com/ws
 
 # For local development (requires local server running)
-ghostwire your_username ws://localhost:8080/ws
+zerodrop your_username ws://localhost:8080/ws
 ```
 
 ### Controls
@@ -177,7 +179,7 @@ No config required. Perfect for free tier hosting.
 ```bash
 cd server
 cargo shuttle deploy
-# Copy the URL provided (e.g., wss://ghostwire.shuttleapp.rs)
+# Copy the URL provided (e.g., wss://zerodrop.shuttleapp.rs)
 ```
 
 ### Option B: Local / VPS
@@ -185,7 +187,7 @@ cargo shuttle deploy
 ```bash
 # For local development
 cd server
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 # Listens on 0.0.0.0:8080 by default
 ```
 
@@ -193,7 +195,7 @@ cargo run --bin ghostwire-local
 
 ## 📂 Documentation
 
-- **[User Guide](docs/user/GUIDE.md)** - Comprehensive guide to using GhostWire
+- **[User Guide](docs/user/GUIDE.md)** - Comprehensive guide to using ZeroDrop
 - **[Security Model](docs/user/SECURITY.md)** - Cryptographic design and threat analysis
 
 For developer documentation, see the [`docs/dev/`](docs/dev/) directory:

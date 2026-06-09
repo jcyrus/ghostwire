@@ -13,7 +13,7 @@ pub fn render(client_count: usize, headers: &HeaderMap, local_mode: bool) -> Str
 <!DOCTYPE html>
 <html>
 <head>
-    <title>GhostWire Relay</title>
+    <title>ZeroDrop Relay</title>
     <style>
         body {{
             background: #000;
@@ -31,7 +31,7 @@ pub fn render(client_count: usize, headers: &HeaderMap, local_mode: bool) -> Str
     </style>
 </head>
 <body>
-    <h1>👻 GhostWire Relay{}</h1>
+    <h1>👻 ZeroDrop Relay{}</h1>
     <div class="status">STATUS: ONLINE</div>
     <div class="info">
         <p>Connected Clients: {}</p>
@@ -50,7 +50,7 @@ pub fn render(client_count: usize, headers: &HeaderMap, local_mode: bool) -> Str
     <p>This server is intentionally "dumb" - it relays messages without reading them.</p>
     <p>All security is client-side. The server knows nothing.</p>
     <hr>
-    <p><a href="https://github.com/jcyrus/GhostWire">GitHub</a> | <a href="/health">Health Check</a></p>
+    <p><a href="https://github.com/jcyrus/zerodrop">GitHub</a> | <a href="/health">Health Check</a></p>
 </body>
 </html>
         "#,
@@ -113,10 +113,10 @@ mod tests {
     #[test]
     fn render_uses_tls_for_remote_hosts() {
         let mut headers = HeaderMap::new();
-        headers.insert("host", HeaderValue::from_static("ghost.jcyrus.com"));
+        headers.insert("host", HeaderValue::from_static("zerodrop.jcyrus.com"));
 
         let html = render(2, &headers, true);
-        assert!(html.contains("wss://ghost.jcyrus.com/ws"));
+        assert!(html.contains("wss://zerodrop.jcyrus.com/ws"));
     }
 
     #[test]

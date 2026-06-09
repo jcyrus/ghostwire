@@ -49,7 +49,7 @@ Current release: **v0.6.0**. The sections below summarise what shipped in each v
 2. **Auto-Reconnect** - Exponential backoff reconnection (1s → 16s)
 3. **Real-time Latency** - Ping/pong timestamp tracking with RTT display
 4. **Typing Indicators** - Throttled typing status with 3s timeout
-5. **Configuration System** - TOML config file in ~/.config/ghostwire/
+5. **Configuration System** - TOML config file in ~/.config/zerodrop/
 6. **Logging System** - Daily rotating logs with RUST_LOG support
 7. **Timestamp Formats** - 24h, 12h, DateTime, Relative ("2m ago")
 8. **Enhanced Scrolling** - Line-based scroll, PageUp/Down, word wrapping
@@ -376,13 +376,13 @@ All warnings resolved! Future-use methods are properly annotated.
 
 ```bash
 # Terminal 1: Server
-cargo run --bin ghostwire-local
+cargo run --bin zerodrop-local
 
 # Terminal 2: Alice
-cargo run -p ghostwire-client alice ws://localhost:8080/ws
+cargo run -p zerodrop alice ws://localhost:8080/ws
 
 # Terminal 3: Bob
-cargo run -p ghostwire-client bob ws://localhost:8080/ws
+cargo run -p zerodrop bob ws://localhost:8080/ws
 ```
 
 **Expected:** Messages show accurate timestamps like `[20:45:32]`

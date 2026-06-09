@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# GhostWire Installer
+# ZeroDrop Installer
 # "The server knows nothing. The terminal is everything."
 
 set -e
 
-REPO="jcyrus/GhostWire"
-BINARY_NAME="ghostwire"
+REPO="jcyrus/zerodrop"
+BINARY_NAME="zerodrop"
 INSTALL_DIR="/usr/local/bin"
 LOCAL_BIN="$HOME/.local/bin"
 
@@ -15,7 +15,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}👻 Initializing GhostWire Sequence...${NC}"
+echo -e "${GREEN}👻 Initializing ZeroDrop Sequence...${NC}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -41,7 +41,7 @@ else
     exit 1
 fi
 
-ASSET_NAME="ghostwire-${PLATFORM}-${ARCH}"
+ASSET_NAME="zerodrop-${PLATFORM}-${ARCH}"
 if [ "$OS" == "Windows" ]; then
     ASSET_NAME="${ASSET_NAME}.exe"
 fi
@@ -89,5 +89,5 @@ else
     fi
 fi
 
-echo -e "${GREEN}✅ GhostWire Installed Successfully!${NC}"
-echo -e "Run with: ${GREEN}ghostwire${NC}"
+echo -e "${GREEN}✅ ZeroDrop Installed Successfully!${NC}"
+echo -e "Run with: ${GREEN}zerodrop${NC}"

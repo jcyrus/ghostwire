@@ -1,4 +1,4 @@
-// GhostWire Server - Shuttle Entry Point
+// ZeroDrop Server - Shuttle Entry Point
 // This is the "dumb relay" server that knows nothing about message content
 
 mod relay;
@@ -19,7 +19,7 @@ use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
 /// Health check endpoint
 async fn health_check() -> &'static str {
-    "GhostWire Relay - Status: ONLINE"
+    "ZeroDrop Relay - Status: ONLINE"
 }
 
 /// Root endpoint with server info
@@ -47,14 +47,14 @@ async fn ws_handler(
 /// Redirect to the install script
 async fn install_redirect() -> impl IntoResponse {
     axum::response::Redirect::temporary(
-        "https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.sh",
+        "https://raw.githubusercontent.com/jcyrus/zerodrop/main/install.sh",
     )
 }
 
 /// Redirect to the PowerShell install script
 async fn install_ps1_redirect() -> impl IntoResponse {
     axum::response::Redirect::temporary(
-        "https://raw.githubusercontent.com/jcyrus/GhostWire/main/install.ps1",
+        "https://raw.githubusercontent.com/jcyrus/zerodrop/main/install.ps1",
     )
 }
 

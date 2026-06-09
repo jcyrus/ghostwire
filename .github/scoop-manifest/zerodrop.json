@@ -1,17 +1,13 @@
 {
-  "_comment": "Legacy alias: ghostwire has been renamed to zerodrop. This manifest installs the new binary under both names for backwards compatibility. New installs should use: scoop install zerodrop",
   "version": "0.7.0",
-  "description": "Renamed to zerodrop — secure, ephemeral TUI chat client",
+  "description": "Secure, ephemeral TUI chat client built with Rust and Ratatui",
   "homepage": "https://github.com/jcyrus/zerodrop",
   "license": "MIT",
   "architecture": {
     "64bit": {
       "url": "https://github.com/jcyrus/zerodrop/releases/download/v0.7.0/zerodrop-windows-amd64.exe",
       "hash": "PUT_WINDOWS_SHA256_HERE",
-      "bin": [
-        ["zerodrop-windows-amd64.exe", "zerodrop"],
-        ["zerodrop-windows-amd64.exe", "ghostwire"]
-      ]
+      "bin": [["zerodrop-windows-amd64.exe", "zerodrop"]]
     }
   },
   "checkver": {

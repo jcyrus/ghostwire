@@ -1,4 +1,4 @@
-# GhostWire Developer Documentation
+# ZeroDrop Developer Documentation
 
 Technical documentation for contributors and maintainers.
 

@@ -1,12 +1,12 @@
 [package]
-name = "ghostwire-client"
+name = "zerodrop"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "ghostwire"
+name = "zerodrop"
 path = "src/main.rs"
 
 [dependencies]

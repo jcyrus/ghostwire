@@ -1,12 +1,12 @@
-// GhostWire Client - Configuration Management
-// Handles loading and saving user preferences from ~/.config/ghostwire/config.toml
+// ZeroDrop Client - Configuration Management
+// Handles loading and saving user preferences from ~/.config/zerodrop/config.toml
 
 use crate::app::TimestampFormat;
 use serde::{Deserialize, Serialize};
 
-/// User configuration for GhostWire client
+/// User configuration for ZeroDrop client
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GhostWireConfig {
+pub struct ZeroDropConfig {
     /// Default server URL to connect to
     #[serde(default = "default_server_url")]
     pub default_server_url: String,
@@ -59,7 +59,7 @@ impl Default for AutoReconnectConfig {
     }
 }
 
-impl Default for GhostWireConfig {
+impl Default for ZeroDropConfig {
     fn default() -> Self {
         Self {
             default_server_url: default_server_url(),
@@ -97,14 +97,14 @@ fn default_max_backoff() -> u64 {
 }
 
 /// Load configuration from disk, or create default if not exists
-pub fn load_config() -> Result<GhostWireConfig, confy::ConfyError> {
-    confy::load("ghostwire", "config")
+pub fn load_config() -> Result<ZeroDropConfig, confy::ConfyError> {
+    confy::load("zerodrop", "config")
 }
 
 /// Save configuration to disk
 #[allow(dead_code)]
-pub fn save_config(config: &GhostWireConfig) -> Result<(), confy::ConfyError> {
-    confy::store("ghostwire", "config", config)
+pub fn save_config(config: &ZeroDropConfig) -> Result<(), confy::ConfyError> {
+    confy::store("zerodrop", "config", config)
 }
 
 #[cfg(test)]
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = GhostWireConfig::default();
+        let config = ZeroDropConfig::default();
         assert_eq!(config.default_server_url, "wss://ghost.jcyrus.com/ws");
         assert!(config.auto_reconnect.enabled);
         assert_eq!(config.auto_reconnect.max_attempts, 10);
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let config = GhostWireConfig::default();
+        let config = ZeroDropConfig::default();
         let toml_str = toml::to_string(&config).unwrap();
         assert!(toml_str.contains("default_server_url"));
         assert!(toml_str.contains("auto_reconnect"));

@@ -1,9 +1,5 @@
-# Legacy alias: ghostwire has been renamed to zerodrop.
-# This formula is kept for backwards compatibility so that
-# `brew upgrade ghostwire` on existing installations continues to work.
-# New installs should use: brew install zerodrop
-class Ghostwire < Formula
-  desc "Renamed to zerodrop — secure, ephemeral TUI chat client"
+class Zerodrop < Formula
+  desc "Secure, ephemeral TUI chat client built with Rust and Ratatui"
   homepage "https://github.com/jcyrus/zerodrop"
   version "0.7.0"
   license "MIT"
@@ -20,9 +16,7 @@ class Ghostwire < Formula
 
   def install
     binary = Hardware::CPU.arm? ? "zerodrop-darwin-arm64" : "zerodrop-darwin-amd64"
-    # Install as both names so existing shell scripts keep working
     bin.install binary => "zerodrop"
-    bin.install_symlink "zerodrop" => "ghostwire"
   end
 
   test do

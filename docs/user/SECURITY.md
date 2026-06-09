@@ -1,4 +1,4 @@
-# GhostWire Security Model
+# ZeroDrop Security Model
 
 **Version**: v0.6.0
 **Last Updated**: May 31, 2026
@@ -8,7 +8,7 @@
 
 ## Overview
 
-GhostWire implements **end-to-end encryption (E2EE)** using modern cryptographic primitives to ensure that only the intended recipients can read messages. The server acts as a "dumb relay" and cannot decrypt message content.
+ZeroDrop implements **end-to-end encryption (E2EE)** using modern cryptographic primitives to ensure that only the intended recipients can read messages. The server acts as a "dumb relay" and cannot decrypt message content.
 
 ### Security Goals
 
@@ -116,7 +116,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 #### Security Audit Logging
 
 - **Status**: ✅ Logs all security events
-- **Location**: `~/.config/ghostwire/security_audit.log`
+- **Location**: `~/.config/zerodrop/security_audit.log`
 - **Events Logged**:
   - Session establishment
   - Message encryption/decryption
@@ -161,7 +161,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ## Threat Model
 
-### What GhostWire Protects Against
+### What ZeroDrop Protects Against
 
 ✅ **Passive Network Eavesdropping**
 
@@ -197,7 +197,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ---
 
-### What GhostWire Does NOT Protect Against
+### What ZeroDrop Does NOT Protect Against
 
 ❌ **Compromised Client Device**
 
@@ -206,7 +206,7 @@ HKDF(shared_secret) -> encryption_key || mac_key || chain_key
 
 ❌ **Compromised Binary**
 
-- If GhostWire itself is backdoored
+- If ZeroDrop itself is backdoored
 - **Mitigation**: Verify checksums, build from source
 
 ❌ **Metadata Leakage**
@@ -317,13 +317,13 @@ safety_number = SHA256(your_public_key || their_public_key)
 - **Key-change detection (TOFU)** — the first public key seen for a peer is
   remembered. If it later changes, the change is audit-logged; if the peer had
   been **verified**, you get a loud in-app warning and must re-verify. (Because
-  GhostWire exchanges the *rotating* X25519 ephemeral key, a change to an
+  ZeroDrop exchanges the *rotating* X25519 ephemeral key, a change to an
   unverified peer is treated as routine rotation and logged quietly.)
 
 **Not Yet Implemented**:
 
 - **DH Double Ratchet** (like Signal) — there is no per-message
-  Diffie-Hellman step, so GhostWire does **not** yet provide
+  Diffie-Hellman step, so ZeroDrop does **not** yet provide
   post-compromise security (a leaked chain key compromises subsequent
   messages until the next 24-hour ephemeral rotation)
 
@@ -348,7 +348,7 @@ DH ratchet step ──► new root key ──► new sending chain
 ### Audit Log Location
 
 ```
-~/.config/ghostwire/security_audit.log
+~/.config/zerodrop/security_audit.log
 ```
 
 ### Sample Audit Entry
@@ -380,7 +380,7 @@ DH ratchet step ──► new root key ──► new sending chain
 
 1. **Verify Safety Numbers** (when available)
    - Compare with your contact out-of-band
-   - If a **verified** peer's key changes, GhostWire warns you in-app and resets
+   - If a **verified** peer's key changes, ZeroDrop warns you in-app and resets
      verification — re-run `/verify` and compare again before trusting it
 
 2. **Use Self-Destruct for Sensitive Messages**
@@ -473,7 +473,7 @@ All cryptographic crates from **RustCrypto** organization, which has ongoing sec
 
 **Please DO NOT open public GitHub issues for security vulnerabilities.**
 
-**Contact**: security@ghostwire.dev (or DM @jcyrus)
+**Contact**: security@zerodrop.dev (or DM @jcyrus)
 
 We follow **responsible disclosure**:
 
@@ -540,4 +540,4 @@ We follow **responsible disclosure**:
 
 ---
 
-**Disclaimer**: While GhostWire uses industry-standard cryptography, it has not yet undergone a third-party security audit. Use for sensitive communications at your own risk. A professional audit is planned for v1.0.0.
+**Disclaimer**: While ZeroDrop uses industry-standard cryptography, it has not yet undergone a third-party security audit. Use for sensitive communications at your own risk. A professional audit is planned for v1.0.0.

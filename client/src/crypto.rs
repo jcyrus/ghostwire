@@ -1,4 +1,4 @@
-// GhostWire Client - Cryptography Module
+// ZeroDrop Client - Cryptography Module
 // Implements E2EE using X25519 (ECDH) + ChaCha20-Poly1305 (AEAD)
 
 use anyhow::{anyhow, Result};
@@ -67,7 +67,7 @@ pub fn generate_ephemeral_keypair() -> EphemeralKeypair {
 pub fn derive_session_keys(
     our_secret: &StaticSecret,
     their_public: &PublicKey,
-    info: &[u8], // Context info (e.g., "GhostWire v0.4.0")
+    info: &[u8], // Context info (e.g., "ZeroDrop v0.4.0")
 ) -> Result<SessionKeys> {
     // Perform ECDH
     let shared_secret = our_secret.diffie_hellman(their_public);
@@ -249,9 +249,9 @@ pub fn kdf_rk(root_key: &[u8; 32], dh_output: &[u8; 32]) -> ([u8; 32], [u8; 32])
     let hkdf = Hkdf::<Sha256>::new(Some(root_key), dh_output);
     let mut new_root = [0u8; 32];
     let mut new_chain = [0u8; 32];
-    hkdf.expand(b"GhostWire-DH-Ratchet-v0.7-root", &mut new_root)
+    hkdf.expand(b"ZeroDrop-DH-Ratchet-v0.7-root", &mut new_root)
         .expect("HKDF expand root");
-    hkdf.expand(b"GhostWire-DH-Ratchet-v0.7-chain", &mut new_chain)
+    hkdf.expand(b"ZeroDrop-DH-Ratchet-v0.7-chain", &mut new_chain)
         .expect("HKDF expand chain");
     (new_root, new_chain)
 }
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn test_encryption_decryption() {
         let key = [42u8; 32];
-        let plaintext = "Hello, GhostWire!";
+        let plaintext = "Hello, ZeroDrop!";
 
         let ciphertext = encrypt_message(plaintext, &key).unwrap();
         let decrypted = decrypt_message(&ciphertext, &key).unwrap();

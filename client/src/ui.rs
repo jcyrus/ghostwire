@@ -1,4 +1,4 @@
-// GhostWire Client - UI Components
+// ZeroDrop Client - UI Components
 // This module handles all Ratatui rendering logic
 
 use crate::app::{App, DeliveryStatus, InputMode};
@@ -69,7 +69,7 @@ fn render_quit_confirmation(f: &mut Frame) {
     let popup_area = centered_rect(44, 7, f.area());
     let text = vec![
         Line::from(Span::styled(
-            "Quit GhostWire?",
+            "Quit ZeroDrop?",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),

@@ -1,13 +1,13 @@
-# GhostWire Documentation
+# ZeroDrop Documentation
 
 ## 👤 User Documentation — [`docs/user/`](user/)
 
-Guides for installing, configuring, and using GhostWire.
+Guides for installing, configuring, and using ZeroDrop.
 
 | Document                           | Description                                                                         |
 | ---------------------------------- | ----------------------------------------------------------------------------------- |
 | [**User Guide**](user/GUIDE.md)    | Comprehensive guide — interface, keybinds, commands, configuration, troubleshooting |
-| [Security Model](user/SECURITY.md) | Cryptographic stack, threat model, what GhostWire protects                          |
+| [Security Model](user/SECURITY.md) | Cryptographic stack, threat model, what ZeroDrop protects                          |
 | [Windows Install](user/WINDOWS.md) | Windows-specific installation and PATH setup                                        |
 
 ## 🛠 Developer Documentation — [`docs/dev/`](dev/)
@@ -25,7 +25,7 @@ Architecture and implementation details for contributors.
 
 | I want to...                    | Read this                            |
 | ------------------------------- | ------------------------------------ |
-| Install and use GhostWire       | [Quick Start](../QUICKSTART.md)      |
+| Install and use ZeroDrop       | [Quick Start](../QUICKSTART.md)      |
 | Learn all features and keybinds | [User Guide](user/GUIDE.md)          |
 | Understand channels and DMs     | [Channels](../CHANNELS.md)           |
 | Contribute code                 | [Contributing](../CONTRIBUTING.md)   |

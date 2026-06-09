@@ -1,4 +1,4 @@
-// GhostWire Client - Network Layer
+// ZeroDrop Client - Network Layer
 // This module handles WebSocket communication in a separate async task
 
 use crate::app::{MessageMeta, MessageType, WireMessage};
@@ -214,7 +214,7 @@ pub async fn network_task(
 
     // Initialize security audit logger
     let audit_logger = Arc::new(Mutex::new({
-        let config_dir = directories::ProjectDirs::from("com", "jcyrus", "ghostwire")
+        let config_dir = directories::ProjectDirs::from("com", "jcyrus", "zerodrop")
             .map(|dirs| dirs.config_dir().to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         SecurityAuditLogger::new(&config_dir)

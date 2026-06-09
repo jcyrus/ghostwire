@@ -1,11 +1,23 @@
 # Changelog
 
-All notable changes to GhostWire will be documented in this file.
+All notable changes to ZeroDrop will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-06-09
+
+### Changed
+
+- **Project renamed from GhostWire to ZeroDrop** — binary is now `zerodrop`,
+  config directory is `~/.config/zerodrop/`, log file is `zerodrop.log`.
+  Homebrew and Scoop packages updated accordingly; `ghostwire` shims remain
+  for one release to allow smooth upgrades.
+- Updated HKDF domain-separation labels (`ZeroDrop v0.4.0`,
+  `ZeroDrop-DH-Ratchet-v0.7-*`) — **wire-format break**: v0.7.1+ clients are
+  intentionally incompatible with v0.7.0 and earlier.
 
 ## [0.7.0] - 2026-06-03
 
@@ -148,7 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Security Audit Logging**
   - Comprehensive logging of all security events
-  - Log location: `~/.config/ghostwire/security_audit.log`
+  - Log location: `~/.config/zerodrop/security_audit.log`
   - Events logged:
     - Session establishment/clearing
     - Message encryption/decryption
@@ -204,8 +216,8 @@ See `docs/SECURITY.md` for complete details.
 ### Added
 
 - **CLI Improvements**
-  - Version flag: `ghostwire --version` displays current version
-  - Enhanced help: `ghostwire --help` with usage examples and keyboard shortcuts
+  - Version flag: `zerodrop --version` displays current version
+  - Enhanced help: `zerodrop --help` with usage examples and keyboard shortcuts
   - Implementation: `client/src/main.rs` using clap 4.4
 
 - **Network Enhancements**
@@ -216,13 +228,13 @@ See `docs/SECURITY.md` for complete details.
   - Implementation: `client/src/network.rs`
 
 - **Configuration System**
-  - Configuration file: `~/.config/ghostwire/config.toml`
+  - Configuration file: `~/.config/zerodrop/config.toml`
   - Settings: default server URL, auto-reconnect, timestamp format, typing indicators, log retention
   - Uses confy crate for TOML management
   - Implementation: `client/src/config.rs`
 
 - **Logging System**
-  - Daily rotating logs to `~/.config/ghostwire/logs/`
+  - Daily rotating logs to `~/.config/zerodrop/logs/`
   - RUST_LOG environment variable support
   - File retention management
   - Implementation: `client/src/logging.rs`
@@ -267,9 +279,9 @@ See `docs/SECURITY.md` for complete details.
   - Root Cause: Intermediate proxies and load balancers (including Shuttle's infrastructure) were timing out idle WebSocket connections due to lack of traffic
   - Solution: Both client and server now send ping frames every 30 seconds and properly respond to ping/pong messages, keeping the connection active even when users aren't chatting
 
-- **Default Server URL**: Changed client default from `ws://localhost:8080/ws` to `wss://ghost.jcyrus.com/ws`
+- **Default Server URL**: Changed client default from `ws://localhost:8080/ws` to `wss://zerodrop.jcyrus.com/ws`
   - Implementation: `client/src/main.rs`
-  - Impact: Users can now connect without specifying a server URL. Running `ghostwire username` now connects to production by default instead of failing with "Connection refused"
+  - Impact: Users can now connect without specifying a server URL. Running `zerodrop username` now connects to production by default instead of failing with "Connection refused"
   - Root Cause: The hardcoded localhost default was intended for development but caused confusion for end users
 
 ### Added
@@ -291,7 +303,7 @@ See `docs/SECURITY.md` for complete details.
 - **Windows Installer**: PowerShell installation script for Windows users
   - Implementation: `install.ps1` with automatic PATH configuration
   - Server route: `/install.ps1` redirects to raw GitHub script
-  - Impact: Windows users can now install with one-liner: `irm https://ghost.jcyrus.com/install.ps1 | iex`
+  - Impact: Windows users can now install with one-liner: `irm https://zerodrop.jcyrus.com/install.ps1 | iex`
   - Automatically adds installation directory to user PATH
   - Includes instructions for refreshing PATH in current session
 
@@ -299,7 +311,7 @@ See `docs/SECURITY.md` for complete details.
 
 ### Added
 
-- **One-Liner Installation**: New "Hacker" install command `curl -sL https://ghost.jcyrus.com/install | bash`.
+- **One-Liner Installation**: New "Hacker" install command `curl -sL https://zerodrop.jcyrus.com/install | bash`.
 - **Install Script**: Robust `install.sh` with OS (Linux/macOS) and Architecture (x64/arm64) detection.
 - **Cross-Platform Builds**: GitHub Actions workflow to automatically build and release binaries for Linux, macOS, and Windows.
 - **Server Redirect**: Added `/install` route to server to redirect to the raw install script.
@@ -372,13 +384,15 @@ See `docs/SECURITY.md` for complete details.
 - No group channels yet (reserved for future)
 - Server broadcasts all messages to all clients (no server-side filtering)
 
-[Unreleased]: https://github.com/jcyrus/ghostwire/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/jcyrus/ghostwire/compare/v0.5.2...v0.6.0
-[0.5.2]: https://github.com/jcyrus/ghostwire/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/jcyrus/ghostwire/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/jcyrus/ghostwire/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/jcyrus/ghostwire/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/jcyrus/ghostwire/compare/v0.3.2...v0.4.0
-[0.1.2]: https://github.com/jcyrus/ghostwire/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/jcyrus/ghostwire/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/jcyrus/ghostwire/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jcyrus/zerodrop/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/jcyrus/zerodrop/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/jcyrus/zerodrop/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/jcyrus/zerodrop/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/jcyrus/zerodrop/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/jcyrus/zerodrop/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/jcyrus/zerodrop/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/jcyrus/zerodrop/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/jcyrus/zerodrop/compare/v0.3.2...v0.4.0
+[0.1.2]: https://github.com/jcyrus/zerodrop/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/jcyrus/zerodrop/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/jcyrus/zerodrop/releases/tag/v0.1.0

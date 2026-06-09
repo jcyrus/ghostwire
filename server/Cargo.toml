@@ -1,19 +1,18 @@
 [package]
-name = "ghostwire-server"
+name = "zerodrop-server"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 # Shuttle deployment binary
-# Shuttle deployment binary
 [[bin]]
-name = "ghostwire-server"
+name = "zerodrop-server"
 path = "src/main.rs"
 
 # Local development binary
 [[bin]]
-name = "ghostwire-local"
+name = "zerodrop-local"
 path = "src/local.rs"
 
 [dependencies]
