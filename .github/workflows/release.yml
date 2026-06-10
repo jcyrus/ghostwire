@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,19 +71,18 @@ jobs:
           "$hash  ${{ matrix.asset_name }}" | Out-File -FilePath "${{ matrix.asset_name }}.sha256" -Encoding ascii -NoNewline
 
       - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ matrix.asset_name }}
             ${{ matrix.asset_name }}.sha256
-          fail_on_missing: false
 
   notify-distribution:
     needs: build-and-release
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Homebrew Tap update
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.TAP_UPDATE_TOKEN }}
           repository: jcyrus/homebrew-tap
@@ -91,7 +90,7 @@ jobs:
           client-payload: '{"project": "zerodrop", "version": "${{ github.ref_name }}"}'
 
       - name: Trigger Scoop Bucket update
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.TAP_UPDATE_TOKEN }}
           repository: jcyrus/scoop-bucket
